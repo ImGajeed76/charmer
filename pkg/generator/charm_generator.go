@@ -2,7 +2,7 @@ package generator
 
 import (
 	"fmt"
-	"github.com/imgajeed76/charmer/pkg/doc_parser"
+	"github.com/ImGajeed76/charmer/pkg/doc_parser"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -40,7 +40,7 @@ import (
 {{- range .Imports}}
     {{.Package}} "{{.ParentPath}}"
 {{- end}}
-    "github.com/imgajeed76/charmer/pkg/charmer"
+    "github.com/ImGajeed76/charmer/pkg/charmer"
 )
 
 var RegisteredCharms = map[string]charmer.CharmFunc{

@@ -15,20 +15,20 @@ Charmer is a Go package that automatically generates Terminal User Interfaces (T
 ### Installation
 
 ```bash
-go get github.com/imgajeed76/charmer/pkg/charmer@v0.0.0
+go get github.com/ImGajeed76/charmer/pkg/charmer@v0.0.0
 ```
 
 ### Setup Your Project
 
 1. Create your `main.go`:
 ```go
-//go:generate go run github.com/imgajeed76/charmer/tools/generate/main.go
+//go:generate go run github.com/ImGajeed76/charmer/tools/generate/main.go
 
 package main
 
 import (
     "your-project/internal/registry"
-    "github.com/imgajeed76/charmer/pkg/charmer"
+    "github.com/ImGajeed76/charmer/pkg/charmer"
 )
 
 func main() {
