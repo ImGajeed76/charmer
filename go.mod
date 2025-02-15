@@ -1,4 +1,4 @@
-module github.com/imgajeed76/charmer
+module github.com/ImGajeed76/charmer
 
 go 1.24.0
 
