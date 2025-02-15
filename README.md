@@ -22,7 +22,7 @@ go get github.com/ImGajeed76/charmer/pkg/charmer@v0.0.0
 
 1. Create your `main.go`:
 ```go
-//go:generate go run github.com/ImGajeed76/charmer/tools/generate/main.go
+//go:generate go run github.com/ImGajeed76/charmer/tools/generate
 
 package main
 
