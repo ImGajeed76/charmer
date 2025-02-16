@@ -31,24 +31,29 @@ func ParseAnnotations(docstring string) Docs {
 			}
 
 			parts := strings.SplitN(line[1:], " ", 2)
-			if len(parts) != 2 {
-				continue
-			}
 
 			currentKey = parts[0]
-			value := strings.TrimSpace(parts[1])
 
 			switch currentKey {
 			case "Title":
+				if len(parts) != 2 {
+					continue
+				}
+				value := strings.TrimSpace(parts[1])
 				docs.Title = value
 			case "Description":
+				if len(parts) != 2 {
+					description.WriteString("")
+					continue
+				}
+				value := strings.TrimSpace(parts[1])
 				description.WriteString(value)
 			}
 			continue
 		}
 
 		// If we're in a description and find a non-empty continuation line
-		if currentKey == "Description" && line != "" {
+		if currentKey == "Description" {
 			description.WriteString("\n") // Add nl between lines
 			description.WriteString(line)
 		}

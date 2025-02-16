@@ -40,12 +40,12 @@ import (
 {{- range .Imports}}
     {{.Package}} "{{.ParentPath}}"
 {{- end}}
-    "github.com/ImGajeed76/charmer/pkg/charmer"
+    "github.com/ImGajeed76/charmer/pkg/charmer/models"
 )
 
-var RegisteredCharms = map[string]charmer.CharmFunc{
+var RegisteredCharms = map[string]models.CharmFunc{
 {{- range .Charms}}
-    "{{.Name}}": {
+    "{{.Path}}": {
         Name:    "{{.Name}}",
         Doc:     ` + "`{{.Doc}}`" + `,
         Execute: {{.Package}}.{{.Name}},
@@ -113,6 +113,11 @@ func FindCharms(dir string, moduleRoot string) ([]CharmFunction, []Import, error
 		// Look through all functions
 		for _, fn := range docPkg.Funcs {
 			if strings.Contains(fn.Doc, "@Charm") {
+				// Escape ` in docstring
+				fn.Doc = strings.ReplaceAll(fn.Doc, "`", "` + \"`\" + `")
+				// Escape \ in docstring
+				fn.Doc = strings.ReplaceAll(fn.Doc, "\\", "\\\\")
+
 				// Parse docstring for annotations
 				docs := doc_parser.ParseAnnotations(fn.Doc)
 
