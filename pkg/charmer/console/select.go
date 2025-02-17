@@ -2,7 +2,7 @@ package console
 
 import (
 	"fmt"
-	constants "github.com/ImGajeed76/charmer/pkg"
+	constants "github.com/ImGajeed76/charmer/internal"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"strings"

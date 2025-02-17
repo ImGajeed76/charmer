@@ -2,6 +2,7 @@ package console
 
 import (
 	"fmt"
+	constants "github.com/ImGajeed76/charmer/internal"
 	"github.com/charmbracelet/glamour"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/76creates/stickers/flexbox"
-	constants "github.com/ImGajeed76/charmer/pkg"
 	"github.com/ImGajeed76/charmer/pkg/charmer/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
