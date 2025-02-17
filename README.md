@@ -17,7 +17,7 @@ command-line interfaces without the hassle of UI implementation.
 ### Installation
 
 ```bash
-go get github.com/ImGajeed76/charmer/pkg/charmer@v0.1.0
+go get github.com/ImGajeed76/charmer/pkg/charmer@v0.3.0
 ```
 
 ### Setup Your Project
