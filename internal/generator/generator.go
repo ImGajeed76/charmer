@@ -2,7 +2,7 @@ package generator
 
 import (
 	"fmt"
-	"github.com/ImGajeed76/charmer/pkg/doc_parser"
+	"github.com/ImGajeed76/charmer/internal/docparser"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -119,7 +119,7 @@ func FindCharms(dir string, moduleRoot string) ([]CharmFunction, []Import, error
 				fn.Doc = strings.ReplaceAll(fn.Doc, "\\", "\\\\")
 
 				// Parse docstring for annotations
-				docs := doc_parser.ParseAnnotations(fn.Doc)
+				docs := docparser.ParseAnnotations(fn.Doc)
 
 				// Get the parent directory path
 				parentDir := filepath.Dir(path)
@@ -234,6 +234,37 @@ func GenerateRegistry(charms []CharmFunction, imports []Import) error {
 }
 
 func Generate() {
+	// if charms directory does not exist, create it with an example charm
+	if _, err := os.Stat("charms"); os.IsNotExist(err) {
+		err := os.Mkdir("charms", 0755)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = os.WriteFile("charms/greeting.go", []byte(`package charms
+
+import (
+	"fmt"
+	"github.com/ImGajeed76/charmer/pkg/charmer/console"
+)
+
+// Greeting godoc
+// @Charm
+// @Title Greeting
+// @Description
+// # Greeting
+// This function asks for your name and greets you.
+func Greeting() {
+	name, _ := console.Input(console.InputOptions{
+		Prompt:   "Enter your name",
+		Required: true,
+	})
+
+	fmt.Println("Hello", name)
+}
+`), 0644)
+	}
+
 	charms, imports, err := FindCharms("charms", "./")
 	if err != nil {
 		log.Fatal(err)

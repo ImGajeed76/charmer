@@ -1,6 +1,8 @@
 # 🎭 Charmer
 
-Charmer is a Go package that automatically generates Terminal User Interfaces (TUIs) from your Go functions. Powered by [Charm](https://github.com/charmbracelet) libraries, it transforms annotated functions into beautiful, navigable command-line interfaces without the hassle of UI implementation.
+Charmer is a Go package that automatically generates Terminal User Interfaces (TUIs) from your Go functions. Powered
+by [Charm](https://github.com/charmbracelet) libraries, it transforms annotated functions into beautiful, navigable
+command-line interfaces without the hassle of UI implementation.
 
 ## ✨ Features
 
@@ -21,51 +23,47 @@ go get github.com/ImGajeed76/charmer/pkg/charmer@v0.1.0
 ### Setup Your Project
 
 1. Create your `main.go`:
+
 ```go
 //go:generate go run github.com/ImGajeed76/charmer/tools/generate
 
 package main
 
 import (
-    "your-project/internal/registry"
-    "github.com/ImGajeed76/charmer/pkg/charmer"
+	"your-project/internal/registry"
+	"github.com/ImGajeed76/charmer/pkg/charmer"
 )
 
 func main() {
-    charmer.Run(registry.RegisteredCharms)
+	charmer.Run(registry.RegisteredCharms)
 }
 ```
 
-2. Create a `charms` directory in your project
-3. Add your charm functions:
+2. Run the Generate command:
 
-```go
-package charms
-
-import "fmt"
-
-// @Charm
-// @Title PrintHello
-// @Description This function prints hello
-// This description is multiline
-func PrintHello() {
-    fmt.Println("Hello")
-}
+```bash
+go generate
 ```
+
+> If you didn't already create a `charms` directory, the generate command will create one for you with a sample
+`greeting.go` file.
 
 ### Build & Run
 
 1. Generate the TUI code:
+
 ```bash
 go generate
 ```
 
 2. Run your application:
+
 ```bash
 go run main.go
 ```
 
 Or build an executable:
+
 ```bash
 go build
 ```
@@ -75,7 +73,7 @@ go build
 Charmer uses a annotation-based approach to create TUIs:
 
 1. Add `@Charm` annotations to your functions
-2. Define titles and descriptions using `@Title` and `@Description`
+2. Define titles and descriptions using `@Title` and `@Description` (Descriptions can be multiline)
 3. Run `go generate` to create the TUI structure
 4. Charmer handles the rest - navigation, UI rendering, and execution
 
@@ -85,7 +83,7 @@ Charmer uses a annotation-based approach to create TUIs:
 your-project/
 ├── main.go
 └── charms/
-    ├── hello.go
+    ├── greeting.go
     └── other_commands.go
 ```
 
@@ -93,7 +91,8 @@ your-project/
 
 ⚠️ **Early Alpha Stage**
 
-This project is currently in early development. Features and APIs may change significantly. The current version might not be fully functional as package publishing is still being configured.
+This project is currently in early development. Features and APIs may change significantly. The current version might
+not be fully functional as package publishing is still being configured.
 
 ## 📝 License
 
@@ -101,7 +100,7 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 ## 💖 Acknowledgments
 
-- Built with love in Switzerland by ImGajeed76
+- Built with ❤️ in Switzerland by ImGajeed76
 - Powered by the amazing [Charm](https://github.com/charmbracelet) libraries
 
 ---
