@@ -30,12 +30,12 @@ go get github.com/ImGajeed76/charmer/pkg/charmer@v0.3.0
 package main
 
 import (
-	"your-project/internal/registry"
-	"github.com/ImGajeed76/charmer/pkg/charmer"
+    "your-project/internal/registry"
+    "github.com/ImGajeed76/charmer/pkg/charmer"
 )
 
 func main() {
-	charmer.Run(registry.RegisteredCharms)
+    charmer.Run(registry.RegisteredCharms)
 }
 ```
 
