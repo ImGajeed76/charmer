@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 func Copy(src string, dest string, detailsSrc sftpmanager.ConnectionDetails, opts ...pathmodels.CopyOptions) error {
@@ -56,8 +55,9 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, src
 	}
 	defer srcFile.Close()
 
-	// Create destination file with proper permissions
-	destFile, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(options.Permissions))
+	// Create destination file with temporary permissions
+	// We'll set the correct permissions after writing the file
+	destFile, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return &pathmodels.PathError{Op: "create", Path: dest, Err: err}
 	}
@@ -95,7 +95,7 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, src
 			return &pathmodels.PathError{Op: "write", Path: dest, Err: err}
 		}
 		if nw != nr {
-			return &pathmodels.PathError{Op: "write", Path: dest, Err: io.ErrShortWrite}
+			return &pathmodels.PathError{Op: "write", Path: dest, Err: err}
 		}
 
 		copied += int64(nw)
@@ -109,10 +109,24 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, src
 		return &pathmodels.PathError{Op: "sync", Path: dest, Err: err}
 	}
 
+	// Close the file before changing attributes
+	destFile.Close()
+
 	// Preserve attributes if requested
 	if options.PreserveAttributes {
-		if err := os.Chtimes(dest, time.Now(), srcInfo.ModTime()); err != nil {
+		// Set the original mode (permission bits)
+		if err := os.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
+		}
+
+		// Set access and modification times
+		if err := os.Chtimes(dest, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "chtimes", Path: dest, Err: err}
+		}
+	} else {
+		// If not preserving attributes, set the permissions from options
+		if err := os.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
 		}
 	}
 
@@ -120,8 +134,8 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, src
 }
 
 func copyDir(ctx context.Context, src, dest string, clientSrc *sftp.Client, srcInfo os.FileInfo, options pathmodels.CopyOptions) error {
-	// Create destination directory
-	if err := os.MkdirAll(dest, os.FileMode(options.Permissions)); err != nil {
+	// Create destination directory with temporary permissions
+	if err := os.MkdirAll(dest, 0700); err != nil {
 		return &pathmodels.PathError{Op: "mkdir", Path: dest, Err: err}
 	}
 
@@ -155,8 +169,19 @@ func copyDir(ctx context.Context, src, dest string, clientSrc *sftp.Client, srcI
 
 	// Preserve directory attributes if requested
 	if options.PreserveAttributes {
-		if err := os.Chtimes(dest, time.Now(), srcInfo.ModTime()); err != nil {
+		// Set the original mode (permission bits)
+		if err := os.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
+		}
+
+		// Set access and modification times
+		if err := os.Chtimes(dest, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "chtimes", Path: dest, Err: err}
+		}
+	} else {
+		// If not preserving attributes, set the permissions from options
+		if err := os.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
 		}
 	}
 

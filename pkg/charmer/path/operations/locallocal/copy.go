@@ -53,8 +53,16 @@ func copyFile(ctx context.Context, src, dest string, srcInfo os.FileInfo, option
 	}
 	defer srcFile.Close()
 
+	var permissions os.FileMode
+	if options.PreserveAttributes {
+		// Preserve all mode bits, not just permission bits
+		permissions = srcInfo.Mode()
+	} else {
+		permissions = os.FileMode(options.Permissions)
+	}
+
 	// Create destination file with proper permissions
-	destFile, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(options.Permissions))
+	destFile, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, permissions)
 	if err != nil {
 		return &pathmodels.PathError{Op: "create", Path: dest, Err: err}
 	}
@@ -72,7 +80,6 @@ func copyFile(ctx context.Context, src, dest string, srcInfo os.FileInfo, option
 
 	// Copy the file contents
 	for {
-		// Check context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -108,8 +115,14 @@ func copyFile(ctx context.Context, src, dest string, srcInfo os.FileInfo, option
 
 	// Preserve attributes if requested
 	if options.PreserveAttributes {
+		// Preserve modification and access times
 		if err := os.Chtimes(dest, time.Now(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "chtimes", Path: dest, Err: err}
+		}
+
+		// Ensure all mode bits are preserved
+		if err := os.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
 		}
 	}
 
@@ -117,8 +130,16 @@ func copyFile(ctx context.Context, src, dest string, srcInfo os.FileInfo, option
 }
 
 func copyDir(ctx context.Context, src, dest string, srcInfo os.FileInfo, options pathmodels.CopyOptions) error {
-	// Create destination directory
-	if err := os.MkdirAll(dest, os.FileMode(options.Permissions)); err != nil {
+	// Get original directory permissions if preserving attributes
+	var dirMode os.FileMode
+	if options.PreserveAttributes {
+		dirMode = srcInfo.Mode()
+	} else {
+		dirMode = os.FileMode(options.Permissions)
+	}
+
+	// Create destination directory with proper permissions
+	if err := os.MkdirAll(dest, dirMode); err != nil {
 		return &pathmodels.PathError{Op: "mkdir", Path: dest, Err: err}
 	}
 
@@ -132,7 +153,6 @@ func copyDir(ctx context.Context, src, dest string, srcInfo os.FileInfo, options
 		srcPath := filepath.Join(src, entry.Name())
 		destPath := filepath.Join(dest, entry.Name())
 
-		// Check context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -157,8 +177,14 @@ func copyDir(ctx context.Context, src, dest string, srcInfo os.FileInfo, options
 
 	// Preserve directory attributes if requested
 	if options.PreserveAttributes {
+		// Preserve modification and access times
 		if err := os.Chtimes(dest, time.Now(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "chtimes", Path: dest, Err: err}
+		}
+
+		// Ensure directory mode is preserved (in case umask affected MkdirAll)
+		if err := os.Chmod(dest, dirMode); err != nil {
+			return &pathmodels.PathError{Op: "chmod", Path: dest, Err: err}
 		}
 	}
 

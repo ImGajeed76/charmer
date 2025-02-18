@@ -3,10 +3,12 @@ package pathsftp
 import (
 	"bytes"
 	"context"
+	"errors"
 	pathmodels "github.com/ImGajeed76/charmer/pkg/charmer/path/models"
 	sftpmanager "github.com/ImGajeed76/charmer/pkg/charmer/sftp"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/ianaindex"
+	"io/fs"
 )
 
 func WriteText(filePath string, content string, encodingName string, connectionDetails sftpmanager.ConnectionDetails) error {
@@ -29,9 +31,25 @@ func WriteText(filePath string, content string, encodingName string, connectionD
 
 	// Create encoder and encode content
 	encoder := enc.NewEncoder()
+	decoder := enc.NewDecoder()
+
+	// First encode the content
 	encoded, err := encoder.Bytes([]byte(content))
 	if err != nil {
-		return &pathmodels.PathError{Op: "sftp-write-encode", Path: filePath, Err: err}
+		return &fs.PathError{Op: "sftp-write-encode", Path: filePath, Err: err}
+	}
+
+	// Then try to decode it back - this validates that the encoding is correct
+	var decoded []byte
+	decoded, err = decoder.Bytes(encoded)
+	if err != nil {
+		return &fs.PathError{Op: "sftp-write-validate", Path: filePath,
+			Err: errors.New("content cannot be represented in specified encoding: " + err.Error())}
+	}
+
+	if string(decoded) != content {
+		return &fs.PathError{Op: "sftp-write-validate", Path: filePath,
+			Err: errors.New("content cannot be represented in specified encoding")}
 	}
 
 	// Create or truncate the remote file

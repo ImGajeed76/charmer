@@ -62,7 +62,8 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, det
 		}
 		defer session.Close()
 
-		cmd := fmt.Sprintf("cp %s %s", src, dest)
+		// Use cp with preserve attributes flag
+		cmd := fmt.Sprintf("cp -p %s %s", src, dest)
 		if err := session.Run(cmd); err == nil {
 			return nil
 		}
@@ -123,13 +124,25 @@ func copyFile(ctx context.Context, src, dest string, clientSrc *sftp.Client, det
 			return &pathmodels.PathError{Op: "sftp-write", Path: dest, Err: err}
 		}
 		if nw != nr {
-			return &pathmodels.PathError{Op: "sftp-write", Path: dest, Err: io.ErrShortWrite}
+			return &pathmodels.PathError{Op: "sftp-write", Path: dest, Err: err}
 		}
 
 		copied += int64(nw)
 		if options.ProgressFunc != nil {
 			options.ProgressFunc(srcInfo.Size(), copied)
 		}
+	}
+
+	// Preserve file mode
+	if err := clientDest.Chmod(dest, srcInfo.Mode()); err != nil {
+		return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+	}
+
+	// Preserve modification and access times
+	mTime := srcInfo.ModTime()
+	aTime := mTime // Since os.FileInfo doesn't provide access time, we'll use mTime as a fallback
+	if err := clientDest.Chtimes(dest, aTime, mTime); err != nil {
+		return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
 	}
 
 	return nil
@@ -151,9 +164,17 @@ func copyDir(ctx context.Context, src, dest string, clientSrc *sftp.Client, deta
 		if err := clientDest.MkdirAll(dest); err != nil {
 			return &pathmodels.PathError{Op: "sftp-mkdir", Path: dest, Err: err}
 		}
+		// Preserve directory mode
+		if err := clientDest.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+		}
 	} else {
 		if err := clientSrc.MkdirAll(dest); err != nil {
 			return &pathmodels.PathError{Op: "sftp-mkdir", Path: dest, Err: err}
+		}
+		// Preserve directory mode
+		if err := clientSrc.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
 		}
 	}
 
@@ -182,6 +203,19 @@ func copyDir(ctx context.Context, src, dest string, clientSrc *sftp.Client, deta
 			if err := copyFile(ctx, srcPath, destPath, clientSrc, detailsSrc, detailsDest, entry, sameServer, options); err != nil {
 				return err
 			}
+		}
+	}
+
+	// Preserve directory timestamps after all contents have been copied
+	mTime := srcInfo.ModTime()
+	aTime := mTime // Since os.FileInfo doesn't provide access time, we'll use mTime as a fallback
+	if !sameServer {
+		if err := clientDest.Chtimes(dest, aTime, mTime); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
+		}
+	} else {
+		if err := clientSrc.Chtimes(dest, aTime, mTime); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
 		}
 	}
 

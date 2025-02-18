@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
+	"time"
 )
 
 func Copy(src string, dest string, details sftpmanager.ConnectionDetails, opts ...pathmodels.CopyOptions) error {
@@ -108,9 +110,25 @@ func copyFile(ctx context.Context, src, dest string, client *sftp.Client, srcInf
 		}
 	}
 
-	// Set file permissions if specified
-	if err := client.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
-		return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+	// Handle file attributes
+	if options.PreserveAttributes {
+		// Preserve mode bits
+		if err := client.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+		}
+
+		// Preserve timestamps
+		atime := srcInfo.Sys().(*syscall.Stat_t).Atim
+		mtime := srcInfo.ModTime()
+
+		if err := client.Chtimes(dest, time.Unix(atime.Sec, atime.Nsec), mtime); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
+		}
+	} else {
+		// Set specified permissions if not preserving attributes
+		if err := client.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+		}
 	}
 
 	return nil
@@ -155,9 +173,25 @@ func copyDir(ctx context.Context, src, dest string, client *sftp.Client, srcInfo
 		}
 	}
 
-	// Set directory permissions if specified
-	if err := client.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
-		return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+	// Handle directory attributes
+	if options.PreserveAttributes {
+		// Preserve mode bits
+		if err := client.Chmod(dest, srcInfo.Mode()); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+		}
+
+		// Preserve timestamps
+		atime := srcInfo.Sys().(*syscall.Stat_t).Atim
+		mtime := srcInfo.ModTime()
+
+		if err := client.Chtimes(dest, time.Unix(atime.Sec, atime.Nsec), mtime); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
+		}
+	} else {
+		// Set specified permissions if not preserving attributes
+		if err := client.Chmod(dest, os.FileMode(options.Permissions)); err != nil {
+			return &pathmodels.PathError{Op: "sftp-chmod", Path: dest, Err: err}
+		}
 	}
 
 	return nil
