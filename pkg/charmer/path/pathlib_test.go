@@ -3,11 +3,14 @@ package path
 import (
 	"bytes"
 	"fmt"
+	pathmodels "github.com/ImGajeed76/charmer/pkg/charmer/path/models"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -852,12 +855,22 @@ func TestPath_CrossSystemOperations(t *testing.T) {
 	sftpDir1 := sftpBase.Join("dir1")
 	sftpDir2 := sftpBase.Join("dir2")
 
+	// Delete SFTP directories
+	err := sftpDir1.RemoveDir(true, true, false)
+	if err != nil {
+		t.Fatalf("Failed to remove SFTP dir1: %v", err)
+	}
+	err = sftpDir2.RemoveDir(true, true, false)
+	if err != nil {
+		t.Fatalf("Failed to remove SFTP dir2: %v", err)
+	}
+
 	// Ensure SFTP test directories exist
-	err := sftpDir1.MakeDir(true, false)
+	err = sftpDir1.MakeDir(true, true)
 	if err != nil {
 		t.Fatalf("Failed to create SFTP dir1: %v", err)
 	}
-	err = sftpDir2.MakeDir(true, false)
+	err = sftpDir2.MakeDir(true, true)
 	if err != nil {
 		t.Fatalf("Failed to create SFTP dir2: %v", err)
 	}
@@ -1093,4 +1106,634 @@ func TestPath_CrossSystemOperations(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestPath_SymlinkOperations(t *testing.T) {
+	if runtime.GOOS == "windows" && !isWindowsSymlinksEnabled() {
+		t.Skip("Skipping symlink tests on Windows without symlink privileges")
+	}
+
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	tests := []struct {
+		name    string
+		setup   func(dir string) (*Path, *Path, error)
+		verify  func(*Path, *Path) error
+		wantErr bool
+	}{
+		{
+			name: "Create and follow file symlink",
+			setup: func(dir string) (*Path, *Path, error) {
+				targetPath := New(filepath.Join(dir, "target.txt"))
+				symlinkPath := New(filepath.Join(dir, "link.txt"))
+
+				err := targetPath.WriteText("test content", "utf-8")
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = os.Symlink(targetPath.path, symlinkPath.path)
+				return targetPath, symlinkPath, err
+			},
+			verify: func(target, link *Path) error {
+				targetContent, err := target.ReadText("utf-8")
+				if err != nil {
+					return err
+				}
+				linkContent, err := link.ReadText("utf-8")
+				if err != nil {
+					return err
+				}
+				if targetContent != linkContent {
+					return fmt.Errorf("content mismatch: target=%q, link=%q", targetContent, linkContent)
+				}
+				return nil
+			},
+		},
+		{
+			name: "Copy preserves symlinks",
+			setup: func(dir string) (*Path, *Path, error) {
+				targetPath := New(filepath.Join(dir, "target.txt"))
+				symlinkPath := New(filepath.Join(dir, "link.txt"))
+				copyPath := New(filepath.Join(dir, "copy.txt"))
+
+				err := symlinkPath.Remove(true, false)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = targetPath.Remove(true, false)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = copyPath.Remove(true, false)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = targetPath.WriteText("test content", "utf-8")
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = os.Symlink(targetPath.path, symlinkPath.path)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				err = symlinkPath.CopyTo(copyPath, pathmodels.CopyOptions{
+					FollowSymlinks: true,
+				})
+				return symlinkPath, copyPath, err
+			},
+			verify: func(symlink, copy *Path) error {
+				isSymlink, err := isSymlink(copy.path)
+				if err != nil {
+					return err
+				}
+				if !isSymlink {
+					return fmt.Errorf("copy is not a symlink")
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path1, path2, err := tt.setup(testDir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Setup error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				if err := tt.verify(path1, path2); err != nil {
+					t.Errorf("Verification failed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestPath_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping permission tests on Windows")
+	}
+
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	tests := []struct {
+		name    string
+		setup   func(dir string) error
+		test    func(dir string) error
+		wantErr bool
+	}{
+		{
+			name: "Create file with specific permissions",
+			setup: func(dir string) error {
+				p := New(filepath.Join(dir, "test.txt"))
+				return p.WriteText("test", "utf-8")
+			},
+			test: func(dir string) error {
+				p := New(filepath.Join(dir, "test.txt"))
+				info, err := os.Stat(p.path)
+				if err != nil {
+					return err
+				}
+				if info.Mode().Perm() != 0644 {
+					return fmt.Errorf("unexpected permissions: got %v, want %v", info.Mode().Perm(), 0644)
+				}
+				return nil
+			},
+		},
+		{
+			name: "Preserve permissions during copy",
+			setup: func(dir string) error {
+				p := New(filepath.Join(dir, "source.txt"))
+				if err := p.WriteText("test", "utf-8"); err != nil {
+					return err
+				}
+				return os.Chmod(p.path, 0600)
+			},
+			test: func(dir string) error {
+				src := New(filepath.Join(dir, "source.txt"))
+				dst := New(filepath.Join(dir, "dest.txt"))
+				if err := src.CopyTo(dst); err != nil {
+					return err
+				}
+
+				srcInfo, err := os.Stat(src.path)
+				if err != nil {
+					return err
+				}
+				dstInfo, err := os.Stat(dst.path)
+				if err != nil {
+					return err
+				}
+				if srcInfo.Mode().Perm() != dstInfo.Mode().Perm() {
+					return fmt.Errorf("permission mismatch: src=%v, dst=%v",
+						srcInfo.Mode().Perm(), dstInfo.Mode().Perm())
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.setup(testDir); err != nil {
+				t.Fatalf("Setup failed: %v", err)
+			}
+			err := tt.test(testDir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Test error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPath_RaceConditions(t *testing.T) {
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	t.Run("Concurrent file access", func(t *testing.T) {
+		p := New(filepath.Join(testDir, "concurrent.txt"))
+
+		var wg sync.WaitGroup
+		errors := make(chan error, 10)
+
+		// Multiple goroutines writing to the same file
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				content := fmt.Sprintf("content-%d", n)
+				if err := p.WriteText(content, "utf-8"); err != nil {
+					errors <- err
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		for err := range errors {
+			t.Errorf("Concurrent write error: %v", err)
+		}
+	})
+
+	t.Run("Concurrent directory operations", func(t *testing.T) {
+		dirPath := New(filepath.Join(testDir, "concurrent-dir"))
+		if err := dirPath.MakeDir(false, false); err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		errors := make(chan error, 10)
+
+		// Multiple goroutines creating files in the same directory
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				p := dirPath.Join(fmt.Sprintf("file-%d.txt", n))
+				if err := p.WriteText("test", "utf-8"); err != nil {
+					errors <- err
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		for err := range errors {
+			t.Errorf("Concurrent directory operation error: %v", err)
+		}
+	})
+}
+
+func TestPath_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{
+			name:    "Unicode path",
+			path:    "/test/路径/测试.txt",
+			wantErr: false,
+		},
+		{
+			name:    "Path with spaces",
+			path:    "/test/path with spaces/file.txt",
+			wantErr: false,
+		},
+		{
+			name:    "Deep path",
+			path:    filepath.Join(append([]string{""}, makePathSegments(50)...)...),
+			wantErr: false,
+		},
+		{
+			name:    "Relative path resolution",
+			path:    "../test/../path/./file.txt",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New(tt.path)
+			err := p.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPath_NetworkFailures(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping network failure tests in short mode")
+	}
+
+	tests := []struct {
+		name    string
+		setup   func() (*Path, error)
+		test    func(*Path) error
+		wantErr bool
+	}{
+		{
+			name: "Connection timeout",
+			setup: func() (*Path, error) {
+				return New("sftp://slowhost.example.com:22/test.txt"), nil
+			},
+			test: func(p *Path) error {
+				return p.WriteText("test", "utf-8")
+			},
+			wantErr: true,
+		},
+		{
+			name: "Connection drop during operation",
+			setup: func() (*Path, error) {
+				return New("sftp://unstablehost.example.com:22/test.txt"), nil
+			},
+			test: func(p *Path) error {
+				// Write large file to trigger connection drop
+				data := make([]byte, 100*1024*1024)
+				return p.WriteBytes(data)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := tt.setup()
+			if err != nil {
+				t.Fatalf("Setup failed: %v", err)
+			}
+			err = tt.test(p)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Test error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPath_FileSystemSpecific(t *testing.T) {
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	tests := []struct {
+		name    string
+		setup   func(dir string) error
+		test    func(dir string) error
+		wantErr bool
+	}{
+		{
+			name: "Case sensitivity",
+			setup: func(dir string) error {
+				p1 := New(filepath.Join(dir, "test.txt"))
+				p2 := New(filepath.Join(dir, "TEST.txt"))
+				if err := p1.WriteText("test1", "utf-8"); err != nil {
+					return err
+				}
+				return p2.WriteText("test2", "utf-8")
+			},
+			test: func(dir string) error {
+				p1 := New(filepath.Join(dir, "test.txt"))
+				p2 := New(filepath.Join(dir, "TEST.txt"))
+				content1, err := p1.ReadText("utf-8")
+				if err != nil {
+					return err
+				}
+				content2, err := p2.ReadText("utf-8")
+				if err != nil {
+					return err
+				}
+				if runtime.GOOS == "windows" && content1 == content2 {
+					return nil // Expected on Windows
+				}
+				if runtime.GOOS != "windows" && content1 != "test1" {
+					return fmt.Errorf("unexpected content: %s", content1)
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.setup(testDir); err != nil {
+				t.Fatalf("Setup failed: %v", err)
+			}
+			err := tt.test(testDir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Test error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPath_TimeOperations(t *testing.T) {
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	t.Run("Preserve timestamps during copy", func(t *testing.T) {
+		src := New(filepath.Join(testDir, "source.txt"))
+		dst := New(filepath.Join(testDir, "dest.txt"))
+
+		// Create source file
+		if err := src.WriteText("test", "utf-8"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Set specific timestamps
+		modTime := time.Now().Add(-24 * time.Hour)
+		if err := os.Chtimes(src.path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+
+		// Copy file
+		if err := src.CopyTo(dst); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify timestamps
+		srcInfo, err := os.Stat(src.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dstInfo, err := os.Stat(dst.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !srcInfo.ModTime().Equal(dstInfo.ModTime()) {
+			t.Errorf("ModTime not preserved: src=%v, dst=%v",
+				srcInfo.ModTime(), dstInfo.ModTime())
+		}
+	})
+}
+
+func TestPath_AtomicOperations(t *testing.T) {
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	t.Run("Atomic rename", func(t *testing.T) {
+		src := New(filepath.Join(testDir, "source.txt"))
+		dst := New(filepath.Join(testDir, "dest.txt"))
+
+		content := "test content"
+		if err := src.WriteText(content, "utf-8"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Perform atomic rename
+		if err := os.Rename(src.path, dst.path); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify content after rename
+		if src.Exists() {
+			t.Error("Source file still exists after rename")
+		}
+
+		gotContent, err := dst.ReadText("utf-8")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotContent != content {
+			t.Errorf("Content mismatch after rename: got %q, want %q", gotContent, content)
+		}
+	})
+
+	t.Run("Atomic write with temporary file", func(t *testing.T) {
+		p := New(filepath.Join(testDir, "atomic.txt"))
+		content := "test content"
+
+		// Write content atomically using temporary file
+		tempPath := p.path + ".tmp"
+		if err := os.WriteFile(tempPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tempPath, p.path); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify content
+		gotContent, err := p.ReadText("utf-8")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotContent != content {
+			t.Errorf("Content mismatch: got %q, want %q", gotContent, content)
+		}
+	})
+}
+
+func TestPath_CharacterEncoding(t *testing.T) {
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	tests := []struct {
+		name     string
+		content  string
+		encoding string
+		wantErr  bool
+	}{
+		{
+			name:     "UTF-8 with BOM",
+			content:  "\xEF\xBB\xBFHello, World!",
+			encoding: "utf-8",
+			wantErr:  false,
+		},
+		{
+			name:     "UTF-16LE",
+			content:  "H\x00e\x00l\x00l\x00o\x00",
+			encoding: "utf-16le",
+			wantErr:  false,
+		},
+		{
+			name:     "ISO-8859-1",
+			content:  "Hello, Wörld!",
+			encoding: "iso-8859-1",
+			wantErr:  false,
+		},
+		{
+			name:     "Invalid UTF-8 sequence",
+			content:  "Hello\xFF\xFE\xFDWorld",
+			encoding: "utf-8",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New(filepath.Join(testDir, "encoded.txt"))
+
+			err := p.WriteText(tt.content, tt.encoding)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("WriteText() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				got, err := p.ReadText(tt.encoding)
+				if err != nil {
+					t.Errorf("ReadText() error = %v", err)
+					return
+				}
+				if got != tt.content {
+					t.Errorf("Content mismatch: got %q, want %q", got, tt.content)
+				}
+			}
+		})
+	}
+}
+
+func TestPath_LargeDirectoryOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping large directory tests in short mode")
+	}
+
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	dirPath := New(filepath.Join(testDir, "large-dir"))
+	if err := dirPath.MakeDir(false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create many files
+	const numFiles = 10000
+	t.Run("Create many files", func(t *testing.T) {
+		for i := 0; i < numFiles; i++ {
+			p := dirPath.Join(fmt.Sprintf("file-%d.txt", i))
+			if err := p.WriteText("test", "utf-8"); err != nil {
+				t.Fatalf("Failed to create file %d: %v", i, err)
+			}
+		}
+	})
+
+	// List files
+	t.Run("List many files", func(t *testing.T) {
+		files, err := dirPath.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != numFiles {
+			t.Errorf("Wrong number of files: got %d, want %d", len(files), numFiles)
+		}
+	})
+
+	// Remove files
+	t.Run("Remove many files", func(t *testing.T) {
+		if err := dirPath.RemoveDir(false, true, true); err != nil {
+			t.Fatal(err)
+		}
+		if dirPath.Exists() {
+			t.Error("Directory still exists after removal")
+		}
+	})
+}
+
+// Helper functions
+
+func isWindowsSymlinksEnabled() bool {
+	// Check if the current user has the SeCreateSymbolicLinkPrivilege
+	if runtime.GOOS != "windows" {
+		return false
+	}
+
+	testDir := os.TempDir()
+	testLink := filepath.Join(testDir, "test-symlink")
+	testTarget := filepath.Join(testDir, "test-target")
+
+	// Try to create a test symlink
+	err := os.Symlink(testTarget, testLink)
+	if err == nil {
+		os.Remove(testLink)
+		return true
+	}
+	return false
+}
+
+func makePathSegments(depth int) []string {
+	segments := make([]string, depth)
+	for i := 0; i < depth; i++ {
+		segments[i] = fmt.Sprintf("dir%d", i)
+	}
+	return segments
+}
+
+func isSymlink(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	return info.Mode()&os.ModeSymlink != 0, nil
 }

@@ -153,6 +153,71 @@ func (m *Manager) GetClient(ctx context.Context, details ConnectionDetails) (*sf
 	return nil, fmt.Errorf("failed to create client after %d attempts: %v", details.MaxRetries+1, err)
 }
 
+// GetSSHSession is a convenience function that uses the global manager
+func GetSSHSession(ctx context.Context, details ConnectionDetails) (*ssh.Session, error) {
+	return GetGlobalManager().GetSSHSession(ctx, details)
+}
+
+// GetSSHSession returns an SSH session for the given connection details
+func (m *Manager) GetSSHSession(ctx context.Context, details ConnectionDetails) (*ssh.Session, error) {
+	details.applyDefaults()
+	key := details.String()
+
+	// Check connection pool limit
+	m.mu.RLock()
+	if len(m.clients) >= m.config.MaxConnections {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("connection pool limit reached (%d)", m.config.MaxConnections)
+	}
+	m.mu.RUnlock()
+
+	// Try to get existing SSH client
+	var sshClient *ssh.Client
+	m.mu.RLock()
+	if info, exists := m.clients[key]; exists {
+		sshClient = info.sshClient
+		info.lastUsed = time.Now()
+	}
+	m.mu.RUnlock()
+
+	if sshClient != nil {
+		// Test if connection is still alive
+		_, err := sshClient.NewSession()
+		if err == nil {
+			return sshClient.NewSession()
+		}
+
+		// Connection is dead, remove it
+		m.mu.Lock()
+		delete(m.clients, key)
+		m.mu.Unlock()
+	}
+
+	// Create new client with retries
+	var _ *ssh.Session
+	var err error
+	for attempt := 0; attempt <= details.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			var _ *sftp.Client
+			if _, err = m.createNewClient(details); err == nil {
+				// Get the SSH client from our clients map
+				m.mu.RLock()
+				info := m.clients[key]
+				m.mu.RUnlock()
+
+				return info.sshClient.NewSession()
+			}
+			if attempt < details.MaxRetries {
+				time.Sleep(details.RetryDelay)
+			}
+		}
+	}
+	return nil, fmt.Errorf("failed to create SSH session after %d attempts: %v", details.MaxRetries+1, err)
+}
+
 func (m *Manager) getExistingClient(key string) (*sftp.Client, bool) {
 	m.mu.RLock()
 	info, exists := m.clients[key]

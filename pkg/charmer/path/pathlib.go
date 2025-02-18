@@ -6,6 +6,11 @@ import (
 	pathmodels "github.com/ImGajeed76/charmer/pkg/charmer/path/models"
 	pathlocal "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/local"
 	"github.com/ImGajeed76/charmer/pkg/charmer/path/operations/locallocal"
+	pathlocalsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/localsftp"
+	pathsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftp"
+	pathsftplocal "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftplocal"
+	pathsftpsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftpsftp"
+	sftpmanager "github.com/ImGajeed76/charmer/pkg/charmer/sftp"
 	"net/url"
 	"path/filepath"
 	"runtime"
@@ -68,6 +73,24 @@ func New(path string) *Path {
 		path:   cleanPath,
 		isSftp: false,
 	}
+}
+
+func (p *Path) ConnectionDetails() (*sftpmanager.ConnectionDetails, error) {
+	if !p.isSftp {
+		return nil, &pathmodels.PathError{Op: "connection-details", Path: p.path, Err: errors.New("Path is no sftp path")}
+	}
+
+	portI, convErr := strconv.Atoi(p.port)
+	if convErr != nil {
+		return nil, &pathmodels.PathError{Op: "connection-details", Path: p.path, Err: errors.New("Cannot convert port to int")}
+	}
+
+	return &sftpmanager.ConnectionDetails{
+		Hostname: p.host,
+		Port:     portI,
+		Username: p.username,
+		Password: p.password,
+	}, nil
 }
 
 // MaxPathLength is the maximum allowed length for a path
@@ -331,8 +354,11 @@ func (p *Path) ReadText(encoding string) (string, error) {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP ReadText
-		return "", &pathmodels.PathError{Op: "read", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return "", connErr
+		}
+		return pathsftp.ReadText(p.path, encoding, *conn)
 	default:
 		return pathlocal.ReadText(p.path, encoding)
 	}
@@ -346,8 +372,11 @@ func (p *Path) WriteText(content string, encoding string) error {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP WriteText
-		return &pathmodels.PathError{Op: "write", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.WriteText(p.path, content, encoding, *conn)
 	default:
 		return pathlocal.WriteText(p.path, content, encoding)
 	}
@@ -361,8 +390,11 @@ func (p *Path) ReadBytes() ([]byte, error) {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP WriteText
-		return nil, &pathmodels.PathError{Op: "read", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return nil, connErr
+		}
+		return pathsftp.ReadBytes(p.path, *conn)
 	default:
 		return pathlocal.ReadBytes(p.path)
 	}
@@ -376,8 +408,11 @@ func (p *Path) WriteBytes(content []byte) error {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP WriteBytes
-		return &pathmodels.PathError{Op: "write", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.WriteBytes(p.path, content, *conn)
 	default:
 		return pathlocal.WriteBytes(p.path, content)
 	}
@@ -481,16 +516,29 @@ func (p *Path) CopyTo(dest *Path, opts ...pathmodels.CopyOptions) error {
 	// Handle different combinations of local and SFTP paths
 	switch {
 	case p.isSftp && dest.isSftp:
-		// TODO: Implement SFTP to SFTP copy
-		return &pathmodels.PathError{Op: "copy", Path: p.path, Err: errors.New("SFTP to SFTP copy not implemented")}
+		connSrc, connSrcErr := p.ConnectionDetails()
+		if connSrcErr != nil {
+			return connSrcErr
+		}
+		connDest, connDestErr := dest.ConnectionDetails()
+		if connDestErr != nil {
+			return connDestErr
+		}
+		return pathsftpsftp.Copy(p.path, dest.path, *connSrc, *connDest, opt)
 
 	case p.isSftp && !dest.isSftp:
-		// TODO: Implement SFTP to local copy
-		return &pathmodels.PathError{Op: "copy", Path: p.path, Err: errors.New("SFTP to local copy not implemented")}
+		connSrc, connSrcErr := p.ConnectionDetails()
+		if connSrcErr != nil {
+			return connSrcErr
+		}
+		return pathsftplocal.Copy(p.path, dest.path, *connSrc, opt)
 
 	case !p.isSftp && dest.isSftp:
-		// TODO: Implement local to SFTP copy
-		return &pathmodels.PathError{Op: "copy", Path: p.path, Err: errors.New("Local to SFTP copy not implemented")}
+		connDest, connDestErr := dest.ConnectionDetails()
+		if connDestErr != nil {
+			return connDestErr
+		}
+		return pathlocalsftp.Copy(p.path, dest.path, *connDest, opt)
 
 	default: // both local
 		return pathlocallocal.Copy(p.path, dest.path, opt)
@@ -513,16 +561,29 @@ func (p *Path) MoveTo(dest *Path, overwrite bool) error {
 
 	switch {
 	case p.isSftp && dest.isSftp:
-		// TODO: Implement SFTP to SFTP move
-		return &pathmodels.PathError{Op: "move", Path: p.path, Err: errors.New("SFTP to SFTP move not implemented")}
+		connSrc, connSrcErr := p.ConnectionDetails()
+		if connSrcErr != nil {
+			return connSrcErr
+		}
+		connDest, connDestErr := dest.ConnectionDetails()
+		if connDestErr != nil {
+			return connDestErr
+		}
+		return pathsftpsftp.Move(p.path, dest.path, *connSrc, *connDest, overwrite)
 
 	case p.isSftp && !dest.isSftp:
-		// TODO: Implement SFTP to local move
-		return &pathmodels.PathError{Op: "move", Path: p.path, Err: errors.New("SFTP to local move not implemented")}
+		connSrc, connSrcErr := p.ConnectionDetails()
+		if connSrcErr != nil {
+			return connSrcErr
+		}
+		return pathsftplocal.Move(p.path, dest.path, *connSrc, overwrite)
 
 	case !p.isSftp && dest.isSftp:
-		// TODO: Implement local to SFTP move
-		return &pathmodels.PathError{Op: "move", Path: p.path, Err: errors.New("Local to SFTP move not implemented")}
+		connDest, connDestErr := dest.ConnectionDetails()
+		if connDestErr != nil {
+			return connDestErr
+		}
+		return pathlocalsftp.Move(p.path, dest.path, *connDest, overwrite)
 
 	default: // both local
 		return pathlocallocal.Move(p.path, dest.path, overwrite)
@@ -530,17 +591,20 @@ func (p *Path) MoveTo(dest *Path, overwrite bool) error {
 }
 
 // Rename renames the path
-func (p *Path) Rename(newName string) error {
+func (p *Path) Rename(newName string, followSymlinks bool) error {
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "rename", Path: p.path, Err: err}
 	}
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP Rename
-		return &pathmodels.PathError{Op: "rename", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.RenameFile(p.path, newName, *conn, followSymlinks)
 	default:
-		return pathlocal.RenameFile(p.path, newName)
+		return pathlocal.RenameFile(p.path, newName, followSymlinks)
 	}
 }
 
@@ -552,8 +616,11 @@ func (p *Path) MakeDir(parents bool, existsOk bool) error {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP MakeDir
-		return &pathmodels.PathError{Op: "mkdir", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.MakeDir(p.path, parents, existsOk, *conn)
 	default:
 		return pathlocal.MakeDir(p.path, parents, existsOk)
 	}
@@ -567,8 +634,11 @@ func (p *Path) Remove(missingOk bool, followSymlinks bool) error {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP Remove
-		return &pathmodels.PathError{Op: "remove", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.Remove(p.path, missingOk, followSymlinks, *conn)
 	default:
 		return pathlocal.Remove(p.path, missingOk, followSymlinks)
 	}
@@ -582,8 +652,11 @@ func (p *Path) RemoveDir(missingOk bool, recursive bool, followSymlinks bool) er
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP RemoveDir
-		return &pathmodels.PathError{Op: "rmdir", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return connErr
+		}
+		return pathsftp.RemoveDir(p.path, missingOk, followSymlinks, recursive, *conn)
 	default:
 		return pathlocal.RemoveDir(p.path, missingOk, followSymlinks, recursive)
 	}
@@ -597,8 +670,11 @@ func (p *Path) Stat() (*pathmodels.FileInfo, error) {
 
 	switch {
 	case p.isSftp:
-		// TODO: Implement SFTP Stat
-		return nil, &pathmodels.PathError{Op: "stat", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return nil, connErr
+		}
+		return pathsftp.Stat(p.path, *conn)
 	default:
 		return pathlocal.Stat(p.path)
 	}
