@@ -69,14 +69,14 @@ func Input(opts ...InputOptions) (string, error) {
 	}
 	fmt.Print("\033[H\033[2J")
 
-	finalModel := m.(model)
+	finalModel := m.(inputModel)
 	if finalModel.quitted {
 		return "", fmt.Errorf("input cancelled")
 	}
 	return finalModel.textInput.Value(), nil
 }
 
-type model struct {
+type inputModel struct {
 	textInput textinput.Model
 	options   InputOptions
 	regex     *regexp.Regexp
@@ -84,7 +84,7 @@ type model struct {
 	err       error
 }
 
-func initialModel(options InputOptions) model {
+func initialModel(options InputOptions) inputModel {
 	ti := textinput.New()
 	ti.Focus()
 	ti.CharLimit = options.CharLimit
@@ -107,18 +107,18 @@ func initialModel(options InputOptions) model {
 		letterRegex = regexp.MustCompile(options.Regex)
 	}
 
-	return model{
+	return inputModel{
 		textInput: ti,
 		options:   options,
 		regex:     letterRegex,
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m inputModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-func (m model) validateInput(input string) (bool, string) {
+func (m inputModel) validateInput(input string) (bool, string) {
 	if m.options.Required && strings.TrimSpace(input) == "" {
 		return false, "Input is required"
 	}
@@ -128,7 +128,7 @@ func (m model) validateInput(input string) (bool, string) {
 	return true, ""
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m inputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
@@ -149,7 +149,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) View() string {
+func (m inputModel) View() string {
 	var builder strings.Builder
 
 	// Add the prompt with styling
