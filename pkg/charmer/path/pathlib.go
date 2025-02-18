@@ -94,10 +94,14 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 	}
 
 	// If path is relative, convert to absolute
-	absPath, err := filepath.Abs(cleanPath)
-	if err != nil {
-		log.Fatal(err)
-		return nil
+	absPath := cleanPath
+	if strings.HasPrefix(cleanPath, ".") {
+		var err error
+		absPath, err = filepath.Abs(cleanPath)
+		if err != nil {
+			log.Fatal(err)
+			return nil
+		}
 	}
 
 	return &Path{

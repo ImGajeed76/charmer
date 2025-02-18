@@ -9,8 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
-	"time"
 )
 
 func Copy(src string, dest string, details sftpmanager.ConnectionDetails, opts ...pathmodels.CopyOptions) error {
@@ -118,10 +116,8 @@ func copyFile(ctx context.Context, src, dest string, client *sftp.Client, srcInf
 		}
 
 		// Preserve timestamps
-		atime := srcInfo.Sys().(*syscall.Stat_t).Atim
-		mtime := srcInfo.ModTime()
-
-		if err := client.Chtimes(dest, time.Unix(atime.Sec, atime.Nsec), mtime); err != nil {
+		// Use ModTime for both atime and mtime as a fallback
+		if err := client.Chtimes(dest, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
 		}
 	} else {
@@ -181,10 +177,8 @@ func copyDir(ctx context.Context, src, dest string, client *sftp.Client, srcInfo
 		}
 
 		// Preserve timestamps
-		atime := srcInfo.Sys().(*syscall.Stat_t).Atim
-		mtime := srcInfo.ModTime()
-
-		if err := client.Chtimes(dest, time.Unix(atime.Sec, atime.Nsec), mtime); err != nil {
+		// Use ModTime for both atime and mtime as a fallback
+		if err := client.Chtimes(dest, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
 			return &pathmodels.PathError{Op: "sftp-chtimes", Path: dest, Err: err}
 		}
 	} else {
