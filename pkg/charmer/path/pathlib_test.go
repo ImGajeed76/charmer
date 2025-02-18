@@ -1710,6 +1710,89 @@ func TestPath_LargeDirectoryOperations(t *testing.T) {
 	})
 }
 
+func TestPath_Glob(t *testing.T) {
+	// Create temporary test directory
+	testDir := createTempDir(t)
+	defer os.RemoveAll(testDir)
+
+	// Create test files
+	testFiles := []string{
+		"file1.txt",
+		"file2.txt",
+		"file3.log",
+		"subdir/file4.txt",
+		"subdir/file5.log",
+	}
+
+	for _, file := range testFiles {
+		path := New(testDir).Join(file)
+		dir := path.Parent()
+		if err := dir.MakeDir(true, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := path.WriteText("test", "UTF-8"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		pattern  string
+		expected []*Path
+	}{
+		{
+			name:    "Match all txt files",
+			pattern: "*.txt",
+			expected: []*Path{
+				New(testDir).Join("file1.txt"),
+				New(testDir).Join("file2.txt"),
+			},
+		},
+		{
+			name:    "Match all log files",
+			pattern: "*.log",
+			expected: []*Path{
+				New(testDir).Join("file3.log"),
+			},
+		},
+		{
+			name:    "Match all files in subdir",
+			pattern: "subdir/*",
+			expected: []*Path{
+				New(testDir).Join("subdir/file4.txt"),
+				New(testDir).Join("subdir/file5.log"),
+			},
+		},
+		{
+			name:    "Match all files recursively",
+			pattern: "**/*",
+			expected: []*Path{
+				New(testDir).Join("subdir/file4.txt"),
+				New(testDir).Join("subdir/file5.log"),
+				New(testDir).Join("file1.txt"),
+				New(testDir).Join("file2.txt"),
+				New(testDir).Join("file3.log"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New(testDir)
+			matches, err := p.Glob(tt.pattern)
+			if err != nil {
+				t.Fatalf("Glob() error = %v", err)
+			}
+
+			for i, match := range matches {
+				if match.String() != tt.expected[i].String() {
+					t.Error(fmt.Sprintf("Paths dont match: %s != %s", tt.expected[i].String(), match.String()))
+				}
+			}
+		})
+	}
+}
+
 // Helper functions
 
 func isWindowsSymlinksEnabled() bool {

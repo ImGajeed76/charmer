@@ -11,6 +11,7 @@ import (
 	pathsftplocal "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftplocal"
 	pathsftpsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftpsftp"
 	sftpmanager "github.com/ImGajeed76/charmer/pkg/charmer/sftp"
+	"log"
 	"net/url"
 	"path/filepath"
 	"runtime"
@@ -19,15 +20,21 @@ import (
 	"unicode"
 )
 
-func New(path string) *Path {
+func New(path string, parameter ...*SFTPConfig) *Path {
 	if path == "" {
 		return nil
+	}
+
+	// Get config
+	var sftpConf *SFTPConfig = nil
+	if len(parameter) > 0 {
+		sftpConf = parameter[0]
 	}
 
 	// Convert Windows backslashes to forward slashes
 	path = strings.ReplaceAll(path, "\\", "/")
 
-	if strings.HasPrefix(path, "sftp://") {
+	if strings.HasPrefix(path, "sftp://") && sftpConf == nil {
 		u, err := url.Parse(path)
 		if err != nil {
 			return nil
@@ -69,8 +76,32 @@ func New(path string) *Path {
 		cleanPath = "/"
 	}
 
+	// Use config if available
+	if sftpConf != nil {
+		if !strings.HasPrefix(cleanPath, "/") {
+			log.Fatal("SFTP path must be absolute")
+			return nil
+		}
+
+		return &Path{
+			path:     cleanPath,
+			isSftp:   true,
+			host:     sftpConf.Host,
+			port:     sftpConf.Port,
+			username: sftpConf.Username,
+			password: sftpConf.Password,
+		}
+	}
+
+	// If path is relative, convert to absolute
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
 	return &Path{
-		path:   cleanPath,
+		path:   absPath,
 		isSftp: false,
 	}
 }
@@ -91,6 +122,38 @@ func (p *Path) ConnectionDetails() (*sftpmanager.ConnectionDetails, error) {
 		Username: p.username,
 		Password: p.password,
 	}, nil
+}
+
+func (p *Path) Copy() *Path {
+	return &Path{
+		path:     p.path,
+		isSftp:   p.isSftp,
+		host:     p.host,
+		port:     p.port,
+		username: p.username,
+		password: p.password,
+	}
+}
+
+func (p *Path) SetPath(path string) error {
+	if path == "" {
+		return errors.New("empty path")
+	}
+
+	// Convert Windows backslashes to forward slashes
+	path = strings.ReplaceAll(path, "\\", "/")
+
+	if strings.HasPrefix(path, "sftp://") {
+		return errors.New("cannot change path to SFTP path. please create a new path instead")
+	}
+
+	cleanPath := filepath.Clean(path)
+	if cleanPath == "." {
+		cleanPath = "/"
+	}
+
+	p.path = cleanPath
+	return nil
 }
 
 // MaxPathLength is the maximum allowed length for a path
@@ -454,7 +517,26 @@ func (p *Path) List() ([]*Path, error) {
 
 	switch {
 	case p.isSftp:
-		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return nil, connErr
+		}
+		list, err := pathsftp.List(p.path, false, *conn)
+		if err != nil {
+			return nil, err
+		}
+
+		// convert list of strings to list of Paths
+		paths := make([]*Path, len(list))
+		for i, path := range list {
+			// make sure the new path is also sftp
+			paths[i] = p.Copy()
+			err := paths[i].SetPath(path)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return paths, nil
 	default:
 		list, err := pathlocal.List(p.path, false)
 		if err != nil {
@@ -482,7 +564,26 @@ func (p *Path) ListRecursive() ([]*Path, error) {
 
 	switch {
 	case p.isSftp:
-		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: errors.New("SFTP not implemented")}
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return nil, connErr
+		}
+		list, err := pathsftp.List(p.path, true, *conn)
+		if err != nil {
+			return nil, err
+		}
+
+		// convert list of strings to list of Paths
+		paths := make([]*Path, len(list))
+		for i, path := range list {
+			// make sure the new path is also sftp
+			paths[i] = p.Copy()
+			err := paths[i].SetPath(path)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return paths, nil
 	default:
 		list, err := pathlocal.List(p.path, true)
 		if err != nil {
@@ -677,5 +778,45 @@ func (p *Path) Stat() (*pathmodels.FileInfo, error) {
 		return pathsftp.Stat(p.path, *conn)
 	default:
 		return pathlocal.Stat(p.path)
+	}
+}
+
+// Glob returns a list of paths matching the pattern
+func (p *Path) Glob(pattern string) ([]*Path, error) {
+	if err := p.Validate(); err != nil {
+		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: err}
+	}
+
+	switch {
+	case p.isSftp:
+		conn, connErr := p.ConnectionDetails()
+		if connErr != nil {
+			return nil, connErr
+		}
+		stringPaths, err := pathsftp.Glob(p.path, pattern, *conn)
+		if err != nil {
+			return nil, err
+		}
+		// map stringPaths to Paths
+		paths := make([]*Path, len(stringPaths))
+		for i, str := range stringPaths {
+			paths[i] = p.Copy()
+			err := paths[i].SetPath(str)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return paths, nil
+	default:
+		stringPaths, err := pathlocal.Glob(p.path, pattern)
+		if err != nil {
+			return nil, err
+		}
+		// map stringPaths to Paths
+		paths := make([]*Path, len(stringPaths))
+		for i, str := range stringPaths {
+			paths[i] = New(str)
+		}
+		return paths, nil
 	}
 }

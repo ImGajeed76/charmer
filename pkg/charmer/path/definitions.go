@@ -8,3 +8,10 @@ type Path struct {
 	username string
 	password string
 }
+
+type SFTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+}
