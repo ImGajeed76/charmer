@@ -1,0 +1,94 @@
+site_name: Charmer
+site_description: Automatically generate Terminal User Interfaces (TUIs) from your Go functions
+site_author: ImGajeed76
+site_url: https://ImGajeed76.github.io/charmer
+
+# Repository
+repo_name: ImGajeed76/charmer
+repo_url: https://github.com/ImGajeed76/charmer
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: 'Copyright &copy; 2025 ImGajeed76 - GPL-3.0 License'
+
+# Configuration
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: pink
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: pink
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+# Customization
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ImGajeed76
+  generator: false
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - meta
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# Plugins
+plugins:
+  - search
+
+# Page tree
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - Project Structure: getting-started/project-structure.md
+      - Troubleshooting: guides/troubleshooting.md
+  - API Documentation:
+      - Console: reference/console-api.md
+      - Path: reference/path-api.md
+      - Config: reference/config-api.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
