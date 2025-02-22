@@ -60,7 +60,7 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 			cleanPath = "/"
 		}
 
-		return &Path{
+		newPath := &Path{
 			path:     cleanPath,
 			isSftp:   true,
 			host:     host,
@@ -68,6 +68,14 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 			username: username,
 			password: password,
 		}
+
+		err = newPath.Validate()
+		if err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		return newPath
 	}
 
 	// Handle local paths
@@ -83,7 +91,7 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 			return nil
 		}
 
-		return &Path{
+		newPath := &Path{
 			path:     cleanPath,
 			isSftp:   true,
 			host:     sftpConf.Host,
@@ -91,9 +99,18 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 			username: sftpConf.Username,
 			password: sftpConf.Password,
 		}
+
+		err := newPath.Validate()
+		if err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		return newPath
 	}
 
 	// If path is relative, convert to absolute
+	// on windows /test would be converted to C:\test
 	absPath := cleanPath
 	if strings.HasPrefix(cleanPath, ".") {
 		var err error
@@ -104,10 +121,18 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 		}
 	}
 
-	return &Path{
+	newPath := &Path{
 		path:   absPath,
 		isSftp: false,
 	}
+
+	err := newPath.Validate()
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	return newPath
 }
 
 func (p *Path) ConnectionDetails() (*sftpmanager.ConnectionDetails, error) {
@@ -188,7 +213,7 @@ func (p *Path) Validate() error {
 	}
 
 	// Check for invalid characters based on platform
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && !p.isSftp {
 		// Windows-specific invalid characters
 		invalidChars := `<>:"|?*`
 		for _, char := range invalidChars {
@@ -214,8 +239,12 @@ func (p *Path) Validate() error {
 	}
 
 	// General path validation
-	if !strings.HasPrefix(p.path, "/") {
+	if !strings.HasPrefix(p.path, "/") && runtime.GOOS != "windows" {
 		return errors.New("path must be absolute (start with /)")
+	} else if !strings.HasPrefix(p.path, "/") && p.isSftp {
+		return errors.New("SFTP path must be absolute (start with /)")
+	} else if !p.isSftp && runtime.GOOS == "windows" && len(p.path) > 2 && p.path[1] == ':' && p.path[2] != '/' {
+		return errors.New("windows path must start with [DriveLetter]:/")
 	}
 
 	// Validate path segments

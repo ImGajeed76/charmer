@@ -14,10 +14,11 @@ import (
 
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name    string
-		path    string
-		want    *Path
-		wantNil bool
+		name            string
+		path            string
+		want            *Path
+		wantNil         bool
+		windowsSpecific bool
 	}{
 		{
 			name:    "Empty path",
@@ -39,6 +40,7 @@ func TestNew(t *testing.T) {
 				path:   "C:/test/path",
 				isSftp: false,
 			},
+			windowsSpecific: true,
 		},
 		{
 			name: "SFTP path with credentials",
@@ -66,6 +68,10 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.windowsSpecific && runtime.GOOS != "windows" {
+				t.Skip("Skipping Windows-specific test on non-Windows platform")
+			}
+
 			got := New(tt.path)
 			if tt.wantNil {
 				if got != nil {
