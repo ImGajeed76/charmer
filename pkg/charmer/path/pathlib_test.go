@@ -64,6 +64,14 @@ func TestNew(t *testing.T) {
 				port:   "22",
 			},
 		},
+		{
+			name: "URL path",
+			path: "https://raw.githubusercontent.com/ImGajeed76/charmer/refs/heads/master/test_file.txt",
+			want: &Path{
+				path:  "https://raw.githubusercontent.com/ImGajeed76/charmer/refs/heads/master/test_file.txt",
+				isUrl: true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -844,10 +852,10 @@ func TestPath_SftpPath(t *testing.T) {
 
 func TestPath_CrossSystemOperations(t *testing.T) {
 	const (
-		sftpUser = "sftptest"
-		sftpPass = "testpass123"
+		sftpUser = "testuser"
+		sftpPass = "testpass"
 		sftpHost = "localhost"
-		sftpPort = "22"
+		sftpPort = "2222"
 	)
 
 	// Create temporary test directories
@@ -855,7 +863,7 @@ func TestPath_CrossSystemOperations(t *testing.T) {
 	defer os.RemoveAll(localDir)
 
 	// Setup SFTP paths
-	sftpURL := fmt.Sprintf("sftp://%s:%s@%s:%s/test", sftpUser, sftpPass, sftpHost, sftpPort)
+	sftpURL := fmt.Sprintf("sftp://%s:%s@%s:%s/charmer_test", sftpUser, sftpPass, sftpHost, sftpPort)
 	sftpBase := New(sftpURL)
 	sftpDir1 := sftpBase.Join("dir1")
 	sftpDir2 := sftpBase.Join("dir2")
@@ -882,6 +890,9 @@ func TestPath_CrossSystemOperations(t *testing.T) {
 
 	// Test data
 	testContent := "Test content for cross-system operations"
+
+	// Test URL
+	testUrl := "https://raw.githubusercontent.com/ImGajeed76/charmer/refs/heads/master/test_file.txt"
 
 	// Helper function to verify file content
 	verifyContent := func(p *Path, expected string) error {
@@ -1004,6 +1015,38 @@ func TestPath_CrossSystemOperations(t *testing.T) {
 			t.Error("Source file still exists after move")
 		}
 		err = verifyContent(moveDestPath, testContent)
+		if err != nil {
+			t.Error(err)
+		}
+	})
+
+	t.Run("URL to Local operations", func(t *testing.T) {
+		// Create source file from URL
+		srcPath := New(testUrl)
+		destPath := New(filepath.Join(localDir, "url_local.txt"))
+		err := srcPath.CopyTo(destPath)
+		if err != nil {
+			t.Fatalf("CopyTo() error = %v", err)
+		}
+
+		// Verify content
+		err = verifyContent(destPath, testContent)
+		if err != nil {
+			t.Error(err)
+		}
+	})
+
+	t.Run("URL to SFTP operations", func(t *testing.T) {
+		// Create source file from URL
+		srcPath := New(testUrl)
+		destPath := sftpDir1.Join("url_sftp.txt")
+		err := srcPath.CopyTo(destPath)
+		if err != nil {
+			t.Fatalf("CopyTo() error = %v", err)
+		}
+
+		// Verify content
+		err = verifyContent(destPath, testContent)
 		if err != nil {
 			t.Error(err)
 		}

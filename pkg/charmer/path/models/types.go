@@ -43,6 +43,8 @@ type CopyOptions struct {
 	Recursive bool
 	// ProgressFunc callback
 	ProgressFunc func(total, copied int64)
+	// Download Options
+	Headers map[string]string
 }
 
 var (
@@ -64,4 +66,18 @@ func (e *PathError) Error() string {
 		return e.Op + " " + e.Path
 	}
 	return e.Op + " " + e.Path + ": " + e.Err.Error()
+}
+
+type HTTPError struct {
+	Op   string
+	Code int
+	Msg  string
+	Err  error
+}
+
+func (e *HTTPError) Error() string {
+	if e.Err == nil {
+		return e.Op + " " + e.Msg + "[" + string(rune(e.Code)) + "]"
+	}
+	return e.Op + " " + e.Msg + "[" + string(rune(e.Code)) + "]: " + e.Err.Error()
 }

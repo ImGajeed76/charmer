@@ -7,6 +7,7 @@ type Path struct {
 	port     string
 	username string
 	password string
+	isUrl    bool
 }
 
 type SFTPConfig struct {

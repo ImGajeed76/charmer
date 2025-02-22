@@ -10,13 +10,17 @@ import (
 	pathsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftp"
 	pathsftplocal "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftplocal"
 	pathsftpsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/sftpsftp"
+	pathurllocal "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/urllocal"
+	pathurlsftp "github.com/ImGajeed76/charmer/pkg/charmer/path/operations/urlsftp"
 	sftpmanager "github.com/ImGajeed76/charmer/pkg/charmer/sftp"
 	"log"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -78,21 +82,37 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 		return newPath
 	}
 
-	// Handle local paths
-	cleanPath := filepath.Clean(path)
-	if cleanPath == "." {
-		cleanPath = "/"
+	// Handle URLs
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		u, err := url.Parse(path)
+		if err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		newPath := &Path{
+			path:  u.String(),
+			isUrl: true,
+		}
+
+		err = newPath.Validate()
+		if err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		return newPath
 	}
 
 	// Use config if available
 	if sftpConf != nil {
-		if !strings.HasPrefix(cleanPath, "/") {
+		if !strings.HasPrefix(path, "/") {
 			log.Fatal("SFTP path must be absolute")
 			return nil
 		}
 
 		newPath := &Path{
-			path:     cleanPath,
+			path:     path,
 			isSftp:   true,
 			host:     sftpConf.Host,
 			port:     sftpConf.Port,
@@ -111,10 +131,10 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 
 	// If path is relative, convert to absolute
 	// on windows /test would be converted to C:\test
-	absPath := cleanPath
-	if strings.HasPrefix(cleanPath, ".") {
+	absPath := path
+	if strings.HasPrefix(path, ".") {
 		var err error
-		absPath, err = filepath.Abs(cleanPath)
+		absPath, err = filepath.Abs(path)
 		if err != nil {
 			log.Fatal(err)
 			return nil
@@ -198,8 +218,13 @@ func (p *Path) Validate() error {
 		return errors.New("empty path")
 	}
 
-	if len(p.path) > MaxPathLength {
+	if len(p.path) > MaxPathLength && !p.isUrl {
 		return fmt.Errorf("path length exceeds maximum allowed (%d characters)", MaxPathLength)
+	}
+
+	// Check if path is sftp and url at the same time
+	if p.isSftp && p.isUrl {
+		return errors.New("path cannot be both SFTP and URL")
 	}
 
 	// Check for null bytes and control characters
@@ -213,7 +238,7 @@ func (p *Path) Validate() error {
 	}
 
 	// Check for invalid characters based on platform
-	if runtime.GOOS == "windows" && !p.isSftp {
+	if runtime.GOOS == "windows" && !p.isSftp && !p.isUrl {
 		// Windows-specific invalid characters
 		invalidChars := `<>:"|?*`
 		for _, char := range invalidChars {
@@ -239,16 +264,30 @@ func (p *Path) Validate() error {
 	}
 
 	// General path validation
-	if !strings.HasPrefix(p.path, "/") && runtime.GOOS != "windows" {
+	if !strings.HasPrefix(p.path, "/") && runtime.GOOS != "windows" && !p.isUrl {
 		return errors.New("path must be absolute (start with /)")
 	} else if !strings.HasPrefix(p.path, "/") && p.isSftp {
 		return errors.New("SFTP path must be absolute (start with /)")
-	} else if !p.isSftp && runtime.GOOS == "windows" && len(p.path) > 2 && p.path[1] == ':' && p.path[2] != '/' {
+	} else if !p.isSftp && !p.isUrl && runtime.GOOS == "windows" && len(p.path) > 2 && p.path[1] == ':' && p.path[2] != '/' {
 		return errors.New("windows path must start with [DriveLetter]:/")
+	} else if !(strings.HasPrefix(p.path, "http://") || strings.HasPrefix(p.path, "https://")) && p.isUrl {
+		return errors.New("URL path must start with http:// or https://")
 	}
 
 	// Validate path segments
-	segments := strings.Split(strings.TrimPrefix(p.path, "/"), "/")
+	segments := strings.Split(
+		strings.TrimPrefix(
+			strings.TrimPrefix(
+				strings.TrimPrefix(
+					p.path,
+					"http://",
+				),
+				"https://",
+			),
+			"/",
+		),
+		"/",
+	)
 	for _, segment := range segments {
 		if segment == "" && len(segments) > 1 {
 			return errors.New("path contains empty segment")
@@ -347,6 +386,10 @@ func (p *Path) IsSftp() bool {
 	return p.isSftp
 }
 
+func (p *Path) IsUrl() bool {
+	return p.isUrl
+}
+
 func (p *Path) String() string {
 	return p.path
 }
@@ -376,14 +419,32 @@ func (p *Path) Join(path string) *Path {
 	// Convert Windows backslashes and clean
 	path = strings.ReplaceAll(path, "\\", "/")
 
-	var newPath string
-	if filepath.IsAbs(path) {
-		newPath = filepath.Clean(path)
-	} else {
-		newPath = filepath.Clean(filepath.Join(p.path, path))
-	}
+	if p.isUrl {
+		// For URLs, we can't use filepath.Join as it might mess up the URL format
+		// Instead, we need to handle URL path joining carefully
 
-	if p.isSftp {
+		// Remove trailing slash from base and leading slash from path to be joined
+		basePath := strings.TrimSuffix(p.path, "/")
+		joinPath := strings.TrimPrefix(path, "/")
+
+		if joinPath == "" {
+			return &Path{
+				path:   basePath,
+				isUrl:  true,
+				isSftp: false,
+			}
+		}
+
+		// Join with a slash
+		newPath := basePath + "/" + joinPath
+
+		return &Path{
+			path:   newPath,
+			isUrl:  true,
+			isSftp: false,
+		}
+	} else if p.isSftp {
+		newPath := filepath.Clean(filepath.Join(p.path, path))
 		return &Path{
 			path:     newPath,
 			isSftp:   true,
@@ -393,14 +454,53 @@ func (p *Path) Join(path string) *Path {
 			password: p.password,
 		}
 	}
+
+	newPath := filepath.Clean(filepath.Join(p.path, path))
 	return &Path{
 		path:   newPath,
 		isSftp: false,
+		isUrl:  false,
 	}
 }
 
 func (p *Path) Parent() *Path {
-	if p.path == "/" {
+	if p.isUrl {
+		u, err := url.Parse(p.path)
+		if err != nil {
+			// If it's not a valid URL, just treat it as a regular path
+			parentPath := filepath.Dir(p.path)
+			return &Path{
+				path:   parentPath,
+				isUrl:  true,
+				isSftp: false,
+			}
+		}
+
+		// Get the path component and find its parent
+		urlPath := u.Path
+		if urlPath == "" || urlPath == "/" {
+			// URL without a path or at root already
+			return p
+		}
+
+		// Find the last slash
+		lastSlash := strings.LastIndex(urlPath, "/")
+		if lastSlash <= 0 {
+			// No slash or only the leading slash
+			u.Path = "/"
+		} else {
+			u.Path = urlPath[:lastSlash]
+			if u.Path == "" {
+				u.Path = "/"
+			}
+		}
+
+		return &Path{
+			path:   u.String(),
+			isUrl:  true,
+			isSftp: false,
+		}
+	} else if p.path == "/" {
 		return p // Root is its own parent
 	}
 
@@ -422,6 +522,30 @@ func (p *Path) Parent() *Path {
 }
 
 func (p *Path) Name() string {
+	if p.isUrl {
+		u, err := url.Parse(p.path)
+		if err != nil {
+			// Fallback to regular path handling
+			return filepath.Base(p.path)
+		}
+
+		path := u.Path
+		if path == "" || path == "/" {
+			return ""
+		}
+
+		// Remove trailing slash if present
+		path = strings.TrimSuffix(path, "/")
+
+		// Get the last part of the path
+		lastSlashIndex := strings.LastIndex(path, "/")
+		if lastSlashIndex == -1 {
+			return path
+		}
+
+		return path[lastSlashIndex+1:]
+	}
+
 	return filepath.Base(p.path)
 }
 
@@ -435,7 +559,8 @@ func (p *Path) Stem() string {
 }
 
 func (p *Path) Suffix() string {
-	ext := filepath.Ext(p.path)
+	name := p.Name()
+	ext := filepath.Ext(name)
 	if ext != "" {
 		return ext[1:] // Remove the leading dot
 	}
@@ -444,6 +569,10 @@ func (p *Path) Suffix() string {
 
 // ReadText reads the content of the file with the specified encoding
 func (p *Path) ReadText(encoding string) (string, error) {
+	if p.isUrl {
+		return "", &pathmodels.PathError{Op: "read", Path: p.path, Err: errors.New("cannot read URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return "", &pathmodels.PathError{Op: "read", Path: p.path, Err: err}
 	}
@@ -462,6 +591,10 @@ func (p *Path) ReadText(encoding string) (string, error) {
 
 // WriteText writes text content to the file with the specified encoding
 func (p *Path) WriteText(content string, encoding string) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "write", Path: p.path, Err: errors.New("cannot write URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "write", Path: p.path, Err: err}
 	}
@@ -480,6 +613,10 @@ func (p *Path) WriteText(content string, encoding string) error {
 
 // ReadBytes reads the content of the file as bytes
 func (p *Path) ReadBytes() ([]byte, error) {
+	if p.isUrl {
+		return nil, &pathmodels.PathError{Op: "read", Path: p.path, Err: errors.New("cannot read URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, &pathmodels.PathError{Op: "read", Path: p.path, Err: err}
 	}
@@ -498,6 +635,10 @@ func (p *Path) ReadBytes() ([]byte, error) {
 
 // WriteBytes writes byte content to the file
 func (p *Path) WriteBytes(content []byte) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "write", Path: p.path, Err: errors.New("cannot write URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "write", Path: p.path, Err: err}
 	}
@@ -522,6 +663,10 @@ func (p *Path) Exists() bool {
 
 // IsDir checks if the path is a directory
 func (p *Path) IsDir() bool {
+	if p.isUrl {
+		return false
+	}
+
 	info, err := p.Stat()
 	if err != nil {
 		return false
@@ -531,6 +676,10 @@ func (p *Path) IsDir() bool {
 
 // IsFile checks if the path is a file
 func (p *Path) IsFile() bool {
+	if p.isUrl {
+		return true
+	}
+
 	info, err := p.Stat()
 	if err != nil {
 		return false
@@ -540,6 +689,10 @@ func (p *Path) IsFile() bool {
 
 // List returns a list of paths in the directory
 func (p *Path) List() ([]*Path, error) {
+	if p.isUrl {
+		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: errors.New("cannot list URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: err}
 	}
@@ -587,6 +740,10 @@ func (p *Path) List() ([]*Path, error) {
 
 // ListRecursive returns a list of paths in the directory and all subdirectories
 func (p *Path) ListRecursive() ([]*Path, error) {
+	if p.isUrl {
+		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: errors.New("cannot list URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, &pathmodels.PathError{Op: "list", Path: p.path, Err: err}
 	}
@@ -632,7 +789,7 @@ func (p *Path) ListRecursive() ([]*Path, error) {
 	}
 }
 
-// CopyTo copies the path to a destination
+// CopyTo copies the path to a destination. If the source is an url, it will be downloaded to the destination
 func (p *Path) CopyTo(dest *Path, opts ...pathmodels.CopyOptions) error {
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "copy", Path: p.path, Err: err}
@@ -647,9 +804,14 @@ func (p *Path) CopyTo(dest *Path, opts ...pathmodels.CopyOptions) error {
 		opt = opts[0]
 	}
 
+	if dest.isUrl {
+		// Error if the destination is a URL
+		return &pathmodels.PathError{Op: "copy", Path: dest.path, Err: errors.New("cannot copy to URL")}
+	}
+
 	// Handle different combinations of local and SFTP paths
 	switch {
-	case p.isSftp && dest.isSftp:
+	case !p.isUrl && p.isSftp && dest.isSftp:
 		connSrc, connSrcErr := p.ConnectionDetails()
 		if connSrcErr != nil {
 			return connSrcErr
@@ -660,19 +822,29 @@ func (p *Path) CopyTo(dest *Path, opts ...pathmodels.CopyOptions) error {
 		}
 		return pathsftpsftp.Copy(p.path, dest.path, *connSrc, *connDest, opt)
 
-	case p.isSftp && !dest.isSftp:
+	case !p.isUrl && p.isSftp && !dest.isSftp:
 		connSrc, connSrcErr := p.ConnectionDetails()
 		if connSrcErr != nil {
 			return connSrcErr
 		}
 		return pathsftplocal.Copy(p.path, dest.path, *connSrc, opt)
 
-	case !p.isSftp && dest.isSftp:
+	case !p.isUrl && !p.isSftp && dest.isSftp:
 		connDest, connDestErr := dest.ConnectionDetails()
 		if connDestErr != nil {
 			return connDestErr
 		}
 		return pathlocalsftp.Copy(p.path, dest.path, *connDest, opt)
+
+	case !p.isSftp && p.isUrl && !dest.isSftp:
+		return pathurllocal.Copy(p.path, dest.path, opt)
+
+	case !p.isSftp && p.isUrl && dest.isSftp:
+		connDest, connDestErr := dest.ConnectionDetails()
+		if connDestErr != nil {
+			return connDestErr
+		}
+		return pathurlsftp.Copy(p.path, dest.path, *connDest, opt)
 
 	default: // both local
 		return pathlocallocal.Copy(p.path, dest.path, opt)
@@ -681,6 +853,10 @@ func (p *Path) CopyTo(dest *Path, opts ...pathmodels.CopyOptions) error {
 
 // MoveTo moves the path to a destination
 func (p *Path) MoveTo(dest *Path, overwrite bool) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "move", Path: p.path, Err: errors.New("cannot move URLs, use CopyTo instead")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "move", Path: p.path, Err: err}
 	}
@@ -726,6 +902,10 @@ func (p *Path) MoveTo(dest *Path, overwrite bool) error {
 
 // Rename renames the path
 func (p *Path) Rename(newName string, followSymlinks bool) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "rename", Path: p.path, Err: errors.New("cannot rename URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "rename", Path: p.path, Err: err}
 	}
@@ -744,6 +924,10 @@ func (p *Path) Rename(newName string, followSymlinks bool) error {
 
 // MakeDir creates a directory
 func (p *Path) MakeDir(parents bool, existsOk bool) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "mkdir", Path: p.path, Err: errors.New("cannot create directories on URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "mkdir", Path: p.path, Err: err}
 	}
@@ -762,6 +946,10 @@ func (p *Path) MakeDir(parents bool, existsOk bool) error {
 
 // Remove removes a file
 func (p *Path) Remove(missingOk bool, followSymlinks bool) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "remove", Path: p.path, Err: errors.New("cannot remove URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "remove", Path: p.path, Err: err}
 	}
@@ -780,6 +968,10 @@ func (p *Path) Remove(missingOk bool, followSymlinks bool) error {
 
 // RemoveDir removes a directory
 func (p *Path) RemoveDir(missingOk bool, recursive bool, followSymlinks bool) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "rmdir", Path: p.path, Err: errors.New("cannot remove directories on URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return &pathmodels.PathError{Op: "rmdir", Path: p.path, Err: err}
 	}
@@ -803,6 +995,60 @@ func (p *Path) Stat() (*pathmodels.FileInfo, error) {
 	}
 
 	switch {
+	case p.isUrl:
+		// For URLs, perform a HEAD request to get basic file information
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+
+		req, err := http.NewRequest("HEAD", p.path, nil)
+		if err != nil {
+			return nil, &pathmodels.PathError{Op: "stat", Path: p.path, Err: err}
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, &pathmodels.PathError{Op: "stat", Path: p.path, Err: err}
+		}
+		defer resp.Body.Close()
+
+		// Check if the request was successful
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, &pathmodels.PathError{
+				Op:   "stat",
+				Path: p.path,
+				Err:  fmt.Errorf("HTTP status code: %d", resp.StatusCode),
+			}
+		}
+
+		// Parse the last modified time if available
+		var modTime time.Time
+		if lastMod := resp.Header.Get("Last-Modified"); lastMod != "" {
+			// Parse the time in HTTP format
+			t, err := time.Parse(time.RFC1123, lastMod)
+			if err == nil {
+				modTime = t
+			}
+		}
+
+		// Get content length if available
+		size := int64(0)
+		if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+			if s, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
+				size = s
+			}
+		}
+
+		// Create a FileInfo object with the information we have
+		fileInfo := &pathmodels.FileInfo{
+			Name:    p.Name(),
+			Size:    size,
+			Mode:    0, // URLs don't have a file mode
+			ModTime: modTime,
+			IsDir:   strings.HasSuffix(p.path, "/"), // This is a heuristic and not always accurate
+		}
+
+		return fileInfo, nil
 	case p.isSftp:
 		conn, connErr := p.ConnectionDetails()
 		if connErr != nil {
@@ -816,6 +1062,10 @@ func (p *Path) Stat() (*pathmodels.FileInfo, error) {
 
 // Glob returns a list of paths matching the pattern
 func (p *Path) Glob(pattern string) ([]*Path, error) {
+	if p.isUrl {
+		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: errors.New("cannot glob URLs")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: err}
 	}

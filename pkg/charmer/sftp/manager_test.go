@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	sftpUser = "sftptest"
-	sftpPass = "testpass123"
+	sftpUser = "testuser"
+	sftpPass = "testpass"
 	sftpHost = "localhost"
-	sftpPort = 22
+	sftpPort = 2222
 )
 
 func TestNewManager(t *testing.T) {
