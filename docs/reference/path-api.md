@@ -51,6 +51,14 @@ sftpUrlPath := path.New("sftp://user:pass@example.com:22/remote/path")
 urlPath := path.New("https://example.com/resource")
 ```
 
+### `Cwd() *Path`
+
+Creates a new Path object for the current working directory.
+
+```go
+cwd := path.Cwd()
+```
+
 ## Path Properties
 
 ### Type Checking

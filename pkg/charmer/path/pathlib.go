@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -153,6 +154,16 @@ func New(path string, parameter ...*SFTPConfig) *Path {
 	}
 
 	return newPath
+}
+
+func Cwd() *Path {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	return New(wd)
 }
 
 func (p *Path) ConnectionDetails() (*sftpmanager.ConnectionDetails, error) {
