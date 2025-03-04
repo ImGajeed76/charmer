@@ -251,7 +251,7 @@ func (p *Path) Validate() error {
 	// Check for invalid characters based on platform
 	if runtime.GOOS == "windows" && !p.isSftp && !p.isUrl {
 		// Windows-specific invalid characters
-		invalidChars := `<>:"|?*`
+		invalidChars := `<>"|?*`
 		for _, char := range invalidChars {
 			if strings.ContainsRune(p.path, char) {
 				return fmt.Errorf("path contains invalid character for Windows: %c", char)
