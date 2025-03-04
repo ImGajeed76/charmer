@@ -385,6 +385,8 @@ func (m *CharmSelectorModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m.handleBackspace()
 	} else {
 		*m.currentPath = filepath.Join(*m.currentPath, selectedOption) + "/"
+		// Windows Problem: filepath.Join() uses backslashes on Windows, change to forward slashes
+		*m.currentPath = strings.ReplaceAll(*m.currentPath, "\\", "/")
 		m.updateOptions()
 	}
 
