@@ -456,6 +456,11 @@ func (p *Path) Join(path string) *Path {
 		}
 	} else if p.isSftp {
 		newPath := filepath.Clean(filepath.Join(p.path, path))
+
+		// If the user is on windows, the filepath.join will return a path with backslashes
+		// We need to convert it to forward slashes
+		newPath = strings.ReplaceAll(newPath, "\\", "/")
+
 		return &Path{
 			path:     newPath,
 			isSftp:   true,
