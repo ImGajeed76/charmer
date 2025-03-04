@@ -229,6 +229,11 @@ func (p *Path) Validate() error {
 		return errors.New("empty path")
 	}
 
+	// If path is sftp or url, convert all backslashes to forward slashes
+	if p.isSftp || p.isUrl {
+		p.path = strings.ReplaceAll(p.path, "\\", "/")
+	}
+
 	if len(p.path) > MaxPathLength && !p.isUrl {
 		return fmt.Errorf("path length exceeds maximum allowed (%d characters)", MaxPathLength)
 	}
