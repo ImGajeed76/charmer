@@ -211,11 +211,6 @@ func (m *CharmSelectorModel) matchesSearch(path string, charm models.CharmFunc, 
 
 // Update handles UI state updates based on user input
 func (m *CharmSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Check if we've reached a terminal charm
-	if _, isCharm := m.charms[strings.TrimSuffix(*m.currentPath, "/")]; isCharm {
-		return m, tea.Quit
-	}
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
@@ -223,6 +218,11 @@ func (m *CharmSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPress(msg)
 	case tea.MouseMsg:
 		return m.handleMouseMsg(msg)
+	}
+
+	// Check if we've reached a terminal charm
+	if _, isCharm := m.charms[strings.TrimSuffix(*m.currentPath, "/")]; isCharm {
+		return m, tea.Quit
 	}
 
 	return m, nil
