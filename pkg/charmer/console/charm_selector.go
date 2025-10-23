@@ -16,6 +16,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	// UI Constants
+	defaultMaxEntries       = 5
+	cardPadding             = 2
+	cardHorizontalPadding   = 3
+	topBarPadding           = 1
+	maxEntriesOffset        = 7
+	descriptionTotalPadding = 4
+	descriptionBorderSpace  = 2
+	descriptionTitleSpace   = 4
+	descriptionWidthOffset  = 10
+	maxCacheSize            = 100
+)
+
 // UI Styles configuration
 var styles = struct {
 	base         lipgloss.Style
@@ -24,6 +38,7 @@ var styles = struct {
 	topBar       lipgloss.Style
 	selectedItem lipgloss.Style
 	path         lipgloss.Style
+	search       lipgloss.Style
 	searchMatch  lipgloss.Style
 	section      lipgloss.Style
 	cursor       lipgloss.Style
@@ -33,32 +48,36 @@ var styles = struct {
 }{
 	base: lipgloss.NewStyle().Padding(1),
 	card: lipgloss.NewStyle().
-		Padding(2, 3). // Increased padding
+		Padding(cardPadding, cardHorizontalPadding).
 		Width(0).
 		Height(0).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("241")), // Subtle border
+		BorderForeground(lipgloss.Color("241")),
 	rightCard: lipgloss.NewStyle().
-		Padding(2, 3).
+		Padding(cardPadding, cardHorizontalPadding).
 		Width(0).
 		Height(0).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(constants.Theme.PrimaryColor)),
 	topBar: lipgloss.NewStyle().
-		Padding(1).
+		Padding(topBarPadding).
 		Foreground(lipgloss.Color(constants.Theme.SecondaryColor)).
 		Align(lipgloss.Center),
 	selectedItem: lipgloss.NewStyle().
 		Foreground(lipgloss.Color(constants.Theme.PrimaryColor)).
 		Bold(true).
-		Background(lipgloss.Color("236")), // Subtle highlight background
+		Background(lipgloss.Color("236")),
 	path: lipgloss.NewStyle().
 		Foreground(lipgloss.Color(constants.Theme.SecondaryColor)).
 		Italic(true).
-		Padding(0, 0, 1, 0), // Added bottom padding
+		Padding(0, 0, 1, 0),
+	search: lipgloss.NewStyle().
+		Foreground(lipgloss.Color(constants.Theme.PrimaryColor)).
+		Bold(true).
+		Padding(0, 0, 0, 0),
 	searchMatch: lipgloss.NewStyle().
 		Underline(true).
-		Background(lipgloss.Color("237")), // Subtle highlight for search matches
+		Background(lipgloss.Color("237")),
 	section: lipgloss.NewStyle().
 		PaddingBottom(1),
 	cursor: lipgloss.NewStyle().
@@ -70,8 +89,8 @@ var styles = struct {
 	cwd: lipgloss.NewStyle().
 		Foreground(lipgloss.Color("202")),
 	hover: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39")).  // Changed to a softer cyan color
-		Background(lipgloss.Color("236")). // Added subtle background
+		Foreground(lipgloss.Color("39")).
+		Background(lipgloss.Color("236")).
 		Bold(true),
 }
 
@@ -99,9 +118,9 @@ type CharmSelectorModel struct {
 	rightCard *flexbox.Cell
 
 	// Mouse state
-	mouseX    int
-	mouseY    int
-	mouseDown bool
+	mouseX         int
+	mouseY         int
+	lastMousePress bool
 
 	// Description box
 	descriptionOffset    int
@@ -124,6 +143,11 @@ type CharmSelectorModel struct {
 
 // NewCharmSelectorModel creates and initializes a new CharmSelectorModel
 func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *string) *CharmSelectorModel {
+	if currentPath == nil {
+		empty := ""
+		currentPath = &empty
+	}
+
 	// Initialize UI components
 	topBar := flexbox.NewCell(1, 1).
 		SetContent(styles.topBar.Render("Charmer")).
@@ -145,16 +169,23 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 	}
 	fb.AddRows(rows)
 
-	renderer, _ := glamour.NewTermRenderer(
+	renderer, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(120),
 	)
+	if err != nil {
+		// Fallback to nil renderer if initialization fails
+		renderer = nil
+	}
+
+	// Normalize the initial path
+	*currentPath = normalizePath(*currentPath)
 
 	return &CharmSelectorModel{
 		charms:               charms,
 		currentPath:          currentPath,
 		options:              []string{},
-		maxEntries:           5,
+		maxEntries:           defaultMaxEntries,
 		searchTerm:           "",
 		flexbox:              fb,
 		topBar:               topBar,
@@ -163,21 +194,52 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 		markdownRenderer:     renderer,
 		descriptionCache:     make(map[string]string),
 		descriptionLineCache: make(map[string][]string),
+		mouseX:               1,
+		mouseY:               1,
+	}
+}
+
+// normalizePath ensures path uses forward slashes and has trailing slash if not empty
+func normalizePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Convert backslashes to forward slashes
+	path = filepath.ToSlash(path)
+	// Ensure trailing slash
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+	return path
+}
+
+// getCurrentPath safely gets the current path value
+func (m *CharmSelectorModel) getCurrentPath() string {
+	if m.currentPath == nil {
+		return ""
+	}
+	return *m.currentPath
+}
+
+// setCurrentPath safely sets the current path value
+func (m *CharmSelectorModel) setCurrentPath(path string) {
+	if m.currentPath != nil {
+		*m.currentPath = path
 	}
 }
 
 func (m *CharmSelectorModel) getCacheKey(option string) string {
-	return *m.currentPath + option
+	return m.getCurrentPath() + "|" + option
 }
 
 func (m *CharmSelectorModel) Init() tea.Cmd {
 	m.updateOptions()
 
-	// Update the TopBar to include the current working directory in a new line
+	// Update the TopBar to include the current working directory
 	cwd, _ := os.Getwd()
 	title := styles.title.Render(fmt.Sprintf("Charmer - v%s", constants.Version))
-	cwd = styles.cwd.Render(cwd)
-	m.topBar.SetContent(title + "\n" + cwd)
+	cwdText := styles.cwd.Render(cwd)
+	m.topBar.SetContent(title + "\n" + cwdText)
 
 	// Get terminal size and initialize dimensions immediately
 	w, h, err := term.GetSize(int(os.Stdout.Fd()))
@@ -185,23 +247,7 @@ func (m *CharmSelectorModel) Init() tea.Cmd {
 		w, h = 80, 24 // fallback
 	}
 
-	// Initialize dimensions directly in Init
-	m.flexbox.SetWidth(w)
-	m.flexbox.SetHeight(h)
-	m.flexbox.ForceRecalculate()
-	m.maxEntries = m.leftCard.GetHeight() - 7
-
-	totalPadding := 4
-	borderSpace := 2
-	titleSpace := 4
-	m.descriptionMaxHeight = m.rightCard.GetHeight() -
-		(totalPadding + borderSpace + titleSpace)
-	m.descriptionMaxWidth = m.rightCard.GetWidth() - 10
-
-	m.markdownRenderer, _ = glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(m.descriptionMaxWidth),
-	)
+	m.updateDimensions(w, h)
 
 	m.prerenderDescription()
 	m.updateDescriptionView()
@@ -212,12 +258,71 @@ func (m *CharmSelectorModel) Init() tea.Cmd {
 	}
 }
 
+// updateDimensions updates all dimension-dependent values
+func (m *CharmSelectorModel) updateDimensions(width, height int) {
+	m.flexbox.SetWidth(width)
+	m.flexbox.SetHeight(height)
+	m.flexbox.ForceRecalculate()
+
+	m.maxEntries = m.leftCard.GetHeight() - maxEntriesOffset
+	if m.maxEntries < 1 {
+		m.maxEntries = 1
+	}
+
+	m.descriptionMaxHeight = m.rightCard.GetHeight() -
+		(descriptionTotalPadding + descriptionBorderSpace + descriptionTitleSpace)
+	if m.descriptionMaxHeight < 1 {
+		m.descriptionMaxHeight = 1
+	}
+
+	m.descriptionMaxWidth = m.rightCard.GetWidth() - descriptionWidthOffset
+	if m.descriptionMaxWidth < 20 {
+		m.descriptionMaxWidth = 20
+	}
+
+	// Recreate renderer with new width
+	if renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(m.descriptionMaxWidth),
+	); err == nil {
+		m.markdownRenderer = renderer
+	}
+}
+
 // updateOptions filters and updates available options based on the current path and search term
 func (m *CharmSelectorModel) updateOptions() {
 	if m.searchTerm != "" {
 		m.updateSearchOptions()
 	} else {
-		m.options = GetAvailablePathOptions(m.charms, *m.currentPath)
+		m.options = GetAvailablePathOptions(m.charms, m.getCurrentPath())
+	}
+
+	// Ensure cursor and offset are within valid bounds
+	m.ensureValidCursorPosition()
+}
+
+// ensureValidCursorPosition ensures cursor and offset are within bounds
+func (m *CharmSelectorModel) ensureValidCursorPosition() {
+	if len(m.options) == 0 {
+		m.cursor = 0
+		m.offset = 0
+		return
+	}
+
+	// Ensure cursor + offset is within options
+	if m.cursor+m.offset >= len(m.options) {
+		if len(m.options) <= m.maxEntries {
+			m.cursor = len(m.options) - 1
+			m.offset = 0
+		} else {
+			m.offset = len(m.options) - m.maxEntries
+			m.cursor = m.maxEntries - 1
+		}
+	}
+
+	// Ensure cursor is within maxEntries
+	if m.cursor >= m.maxEntries {
+		m.cursor = m.maxEntries - 1
 	}
 }
 
@@ -246,7 +351,8 @@ func (m *CharmSelectorModel) matchesSearch(path string, charm models.CharmFunc, 
 // Update handles UI state updates based on user input
 func (m *CharmSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Check if we've reached a terminal charm
-	if _, isCharm := m.charms[strings.TrimSuffix(*m.currentPath, "/")]; isCharm {
+	currentPath := m.getCurrentPath()
+	if _, isCharm := m.charms[strings.TrimSuffix(currentPath, "/")]; isCharm {
 		return m, tea.Quit
 	}
 
@@ -264,29 +370,13 @@ func (m *CharmSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleWindowSize updates the UI layout based on window size
 func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
-	m.flexbox.SetWidth(msg.Width)
-	m.flexbox.SetHeight(msg.Height)
-	m.flexbox.ForceRecalculate()
-	m.maxEntries = m.leftCard.GetHeight() - 7
-
-	totalPadding := 4 // top + bottom padding
-	borderSpace := 2  // top + bottom borders
-	titleSpace := 4   // space for title
-	m.descriptionMaxHeight = m.rightCard.GetHeight() - (totalPadding + borderSpace + titleSpace)
-	m.descriptionMaxWidth = m.rightCard.GetWidth() - 10
-
-	m.markdownRenderer, _ = glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(m.descriptionMaxWidth),
-	)
-
 	if m.initialized {
 		m.cleanup()
 	}
 
+	m.updateDimensions(msg.Width, msg.Height)
 	m.prerenderDescription()
 	m.updateDescriptionView()
-
 	m.initialized = true
 
 	return m, nil
@@ -296,7 +386,7 @@ func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model,
 func (m *CharmSelectorModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		*m.currentPath = "" // reset so no function gets called
+		m.setCurrentPath("") // reset so no function gets called
 		return m, tea.Quit
 	case "up":
 		if m.mouseX < m.leftCard.GetWidth() {
@@ -326,8 +416,9 @@ func (m *CharmSelectorModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cm
 	m.mouseX = msg.X
 	m.mouseY = msg.Y
 
-	lastMouseDown := m.mouseDown
-	m.mouseDown = false
+	currentMousePress := msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress
+	wasPressed := !m.lastMousePress && currentMousePress
+	m.lastMousePress = currentMousePress
 
 	if msg.Button == tea.MouseButtonWheelUp {
 		if m.mouseX < m.leftCard.GetWidth() {
@@ -341,39 +432,55 @@ func (m *CharmSelectorModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cm
 		} else {
 			m.scrollDescriptionDown()
 		}
-	} else if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
-		lastMouseDown = false
-		m.mouseDown = true
 	}
 
-	if !lastMouseDown && m.mouseDown {
-		if m.isHovering && m.cursor != m.hoverIndex {
-			m.cursor = m.hoverIndex
-			m.descriptionOffset = 0
-			m.prerenderDescription()
-		} else if m.isHovering && m.cursor == m.hoverIndex {
-			m.handleEnter()
-		}
-	}
+	// Handle hover
+	m.updateHoverState()
 
-	if m.mouseX < m.leftCard.GetWidth() {
-		relativeY := msg.Y - m.topBar.GetHeight() - 1
-		if m.searchTerm != "" {
-			relativeY--
+	// Handle click
+	if wasPressed {
+		if m.isHovering && m.isValidIndex(m.hoverIndex) {
+			if m.cursor+m.offset != m.hoverIndex {
+				m.cursor = m.hoverIndex - m.offset
+				if m.cursor < 0 {
+					m.cursor = 0
+				}
+				m.descriptionOffset = 0
+				m.prerenderDescription()
+				m.updateDescriptionView()
+			} else {
+				return m.handleEnter()
+			}
 		}
-		relativeY -= 6
-
-		if relativeY >= 0 && relativeY < m.maxEntries {
-			m.hoverIndex = relativeY + m.offset
-			m.isHovering = m.hoverIndex < len(m.options)
-		} else {
-			m.isHovering = false
-		}
-	} else {
-		m.isHovering = false
 	}
 
 	return m, nil
+}
+
+// updateHoverState updates hover state based on mouse position
+func (m *CharmSelectorModel) updateHoverState() {
+	if m.mouseX >= m.leftCard.GetWidth() {
+		m.isHovering = false
+		return
+	}
+
+	relativeY := m.mouseY - m.topBar.GetHeight() - 1
+	if m.searchTerm != "" {
+		relativeY--
+	}
+	relativeY -= 6
+
+	if relativeY >= 0 && relativeY < m.maxEntries {
+		m.hoverIndex = relativeY + m.offset
+		m.isHovering = m.isValidIndex(m.hoverIndex)
+	} else {
+		m.isHovering = false
+	}
+}
+
+// isValidIndex checks if an index is valid for the current options
+func (m *CharmSelectorModel) isValidIndex(index int) bool {
+	return index >= 0 && index < len(m.options)
 }
 
 func (m *CharmSelectorModel) navigateUp() {
@@ -384,9 +491,14 @@ func (m *CharmSelectorModel) navigateUp() {
 	}
 	m.descriptionOffset = 0
 	m.prerenderDescription()
+	m.updateDescriptionView()
 }
 
 func (m *CharmSelectorModel) navigateDown() {
+	if !m.isValidIndex(m.cursor + m.offset) {
+		return
+	}
+
 	if m.cursor < len(m.options)-1 && m.cursor < m.maxEntries-1 {
 		m.cursor++
 	} else if (m.cursor + m.offset) < len(m.options)-1 {
@@ -394,6 +506,7 @@ func (m *CharmSelectorModel) navigateDown() {
 	}
 	m.descriptionOffset = 0
 	m.prerenderDescription()
+	m.updateDescriptionView()
 }
 
 func (m *CharmSelectorModel) scrollDescriptionUp() {
@@ -416,27 +529,33 @@ func (m *CharmSelectorModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	selectedOption := m.options[m.cursor+m.offset]
-	oldPath := *m.currentPath
+	index := m.cursor + m.offset
+	if !m.isValidIndex(index) {
+		return m, nil
+	}
+
+	selectedOption := m.options[index]
+	oldPath := m.getCurrentPath()
 
 	if m.searchTerm != "" {
-		*m.currentPath = selectedOption
+		m.setCurrentPath(selectedOption)
+		m.searchTerm = ""
 	} else if selectedOption == ".." {
 		return m.handleBackspace()
 	} else {
-		*m.currentPath = filepath.Join(*m.currentPath, selectedOption) + "/"
-		// Windows Problem: filepath.Join() uses backslashes on Windows, change to forward slashes
-		*m.currentPath = strings.ReplaceAll(*m.currentPath, "\\", "/")
-		m.updateOptions()
+		newPath := normalizePath(filepath.Join(m.getCurrentPath(), selectedOption))
+		m.setCurrentPath(newPath)
 	}
 
-	if oldPath != *m.currentPath {
+	if oldPath != m.getCurrentPath() {
 		m.cleanup()
 	}
 
+	m.updateOptions()
 	m.descriptionOffset = 0
 	m.resetNavigationState()
 	m.prerenderDescription()
+	m.updateDescriptionView()
 
 	if len(m.options) == 1 && m.options[0] == ".." {
 		return m, tea.Quit
@@ -449,11 +568,13 @@ func (m *CharmSelectorModel) handleBackspace() (tea.Model, tea.Cmd) {
 	if m.searchTerm != "" {
 		m.searchTerm = m.searchTerm[:len(m.searchTerm)-1]
 		m.updateOptions()
+		m.resetNavigationState()
 	} else {
 		m.navigateBack()
 	}
 	m.descriptionOffset = 0
 	m.prerenderDescription()
+	m.updateDescriptionView()
 	return m, nil
 }
 
@@ -461,11 +582,13 @@ func (m *CharmSelectorModel) handleEscape() (tea.Model, tea.Cmd) {
 	if m.searchTerm != "" {
 		m.searchTerm = ""
 		m.updateOptions()
+		m.resetNavigationState()
 	} else {
 		m.navigateBack()
 	}
 	m.descriptionOffset = 0
 	m.prerenderDescription()
+	m.updateDescriptionView()
 	return m, nil
 }
 
@@ -475,6 +598,7 @@ func (m *CharmSelectorModel) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.C
 		m.updateOptions()
 		m.resetNavigationState()
 		m.prerenderDescription()
+		m.updateDescriptionView()
 	}
 	return m, nil
 }
@@ -485,21 +609,24 @@ func (m *CharmSelectorModel) resetNavigationState() {
 }
 
 func (m *CharmSelectorModel) navigateBack() {
-	if *m.currentPath == "" {
+	currentPath := m.getCurrentPath()
+	if currentPath == "" {
 		return
 	}
 
-	*m.currentPath = strings.TrimSuffix(*m.currentPath, "/")
-	lastSlash := strings.LastIndex(*m.currentPath, "/")
+	currentPath = strings.TrimSuffix(currentPath, "/")
+	lastSlash := strings.LastIndex(currentPath, "/")
 	if lastSlash == -1 {
-		*m.currentPath = ""
+		currentPath = ""
 	} else {
-		*m.currentPath = (*m.currentPath)[:lastSlash+1]
+		currentPath = currentPath[:lastSlash+1]
 	}
 
+	m.setCurrentPath(currentPath)
 	m.updateOptions()
 	m.resetNavigationState()
 	m.prerenderDescription()
+	m.updateDescriptionView()
 }
 
 // View renders the UI
@@ -512,12 +639,12 @@ func (m *CharmSelectorModel) View() string {
 
 	// Show current path and search with section spacing
 	pathSection := styles.section.Render(
-		styles.path.Render("Current Path: " + *m.currentPath))
+		styles.path.Render("Charm Folder: /" + m.getCurrentPath()))
 	leftCardContent.WriteString(pathSection)
 
 	if m.searchTerm != "" {
 		searchSection := styles.section.Render(
-			fmt.Sprintf("Search: %s", m.searchTerm))
+			styles.search.Render("Search: " + m.searchTerm))
 		leftCardContent.WriteString(searchSection)
 	}
 	leftCardContent.WriteString("\n")
@@ -528,13 +655,15 @@ func (m *CharmSelectorModel) View() string {
 }
 
 func (m *CharmSelectorModel) prerenderDescription() {
-	if len(m.options) == 0 || m.cursor+m.offset >= len(m.options) {
+	index := m.cursor + m.offset
+	if len(m.options) == 0 || !m.isValidIndex(index) {
 		m.currentDescription = ""
 		m.descriptionLines = nil
+		m.lastSelectedOption = ""
 		return
 	}
 
-	selectedOption := m.options[m.cursor+m.offset]
+	selectedOption := m.options[index]
 	cacheKey := m.getCacheKey(selectedOption)
 
 	// If the selected option hasn't changed, no need to update
@@ -551,12 +680,20 @@ func (m *CharmSelectorModel) prerenderDescription() {
 	}
 
 	// Only render if it's actually a charm
-	if charm, ok := m.charms[*m.currentPath+selectedOption]; ok {
-		rendered, err := m.markdownRenderer.Render(charm.Description)
-		if err != nil {
-			m.currentDescription = "Error rendering description"
-			m.descriptionLines = []string{"Error rendering description"}
-			return
+	fullPath := m.getCurrentPath() + selectedOption
+	if charm, ok := m.charms[fullPath]; ok {
+		rendered := charm.Description
+
+		// Use markdown renderer if available
+		if m.markdownRenderer != nil {
+			if md, err := m.markdownRenderer.Render(charm.Description); err == nil {
+				rendered = md
+			}
+		}
+
+		// Enforce cache size limit
+		if len(m.descriptionCache) > maxCacheSize {
+			m.cleanup()
 		}
 
 		// Cache the results
@@ -577,6 +714,14 @@ func (m *CharmSelectorModel) updateDescriptionView() {
 		return
 	}
 
+	// Ensure offset is within bounds
+	if m.descriptionOffset >= len(m.descriptionLines) {
+		m.descriptionOffset = len(m.descriptionLines) - 1
+	}
+	if m.descriptionOffset < 0 {
+		m.descriptionOffset = 0
+	}
+
 	// Calculate visible range
 	startIdx := m.descriptionOffset
 	endIdx := m.descriptionOffset + m.descriptionMaxHeight
@@ -585,7 +730,7 @@ func (m *CharmSelectorModel) updateDescriptionView() {
 	}
 
 	var content strings.Builder
-	content.Grow(m.descriptionMaxWidth * m.descriptionMaxHeight) // Preallocate buffer
+	content.Grow(m.descriptionMaxWidth * m.descriptionMaxHeight)
 
 	// Add scroll indicators and content
 	if m.descriptionOffset > 0 {
@@ -639,14 +784,10 @@ func (m *CharmSelectorModel) renderOption(content *strings.Builder, index int, o
 	cursor := " "
 	if index == m.cursor+m.offset {
 		cursor = ">"
-		if _, ok := m.charms[*m.currentPath+option]; ok {
-			m.updateDescriptionView()
-		} else {
-			m.rightCard.SetContent("")
-		}
 	}
 
-	if charm, ok := m.charms[*m.currentPath+option]; ok {
+	fullPath := m.getCurrentPath() + option
+	if charm, ok := m.charms[fullPath]; ok {
 		m.renderCharmOption(content, index, option, cursor, charm)
 	} else {
 		m.renderPathOption(content, index, option, cursor)
@@ -662,20 +803,12 @@ func (m *CharmSelectorModel) renderCharmOption(content *strings.Builder, index i
 
 		// Highlight search matches in title
 		if strings.Contains(strings.ToLower(title), strings.ToLower(m.searchTerm)) {
-			idx := strings.Index(strings.ToLower(title), strings.ToLower(m.searchTerm))
-			matchLen := len(m.searchTerm)
-			title = title[:idx] +
-				styles.searchMatch.Render(title[idx:idx+matchLen]) +
-				title[idx+matchLen:]
+			title = m.highlightSearchMatch(title, m.searchTerm)
 		}
 
 		// Highlight search matches in path
 		if strings.Contains(strings.ToLower(path), strings.ToLower(m.searchTerm)) {
-			idx := strings.Index(strings.ToLower(path), strings.ToLower(m.searchTerm))
-			matchLen := len(m.searchTerm)
-			path = path[:idx] +
-				styles.searchMatch.Render(path[idx:idx+matchLen]) +
-				path[idx+matchLen:]
+			path = m.highlightSearchMatch(path, m.searchTerm)
 		}
 
 		optionText = fmt.Sprintf("%s %s (%s)",
@@ -700,6 +833,22 @@ func (m *CharmSelectorModel) renderCharmOption(content *strings.Builder, index i
 	content.WriteString(optionText + "\n")
 }
 
+// highlightSearchMatch highlights matching text in the original string
+func (m *CharmSelectorModel) highlightSearchMatch(text, searchTerm string) string {
+	lowerText := strings.ToLower(text)
+	lowerSearch := strings.ToLower(searchTerm)
+	idx := strings.Index(lowerText, lowerSearch)
+
+	if idx == -1 {
+		return text
+	}
+
+	matchLen := len(searchTerm)
+	return text[:idx] +
+		styles.searchMatch.Render(text[idx:idx+matchLen]) +
+		text[idx+matchLen:]
+}
+
 // renderPathOption renders a path option
 func (m *CharmSelectorModel) renderPathOption(content *strings.Builder, index int, option, cursor string) {
 	optionText := cursor + " " + option
@@ -716,7 +865,8 @@ func (m *CharmSelectorModel) renderPathOption(content *strings.Builder, index in
 
 // getPathSegment extracts the relevant path segment for display
 func (m *CharmSelectorModel) getPathSegment(path string) string {
-	segment := strings.TrimPrefix(path, *m.currentPath)
+	currentPath := m.getCurrentPath()
+	segment := strings.TrimPrefix(path, currentPath)
 	segment = strings.TrimPrefix(segment, "/")
 	if strings.Contains(segment, "/") {
 		segment = strings.Split(segment, "/")[0]
@@ -754,7 +904,8 @@ func GetAvailablePathOptions(charms map[string]models.CharmFunc, currentPath str
 }
 
 func (m *CharmSelectorModel) cleanup() {
-	// Clear caches when path changes or on exit
+	// Clear caches to prevent memory leaks
 	m.descriptionCache = make(map[string]string)
 	m.descriptionLineCache = make(map[string][]string)
+	m.lastSelectedOption = ""
 }
