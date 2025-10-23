@@ -341,7 +341,8 @@ func (m *CharmSelectorModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cm
 		} else {
 			m.scrollDescriptionDown()
 		}
-	} else if msg.Button == tea.MouseButtonLeft {
+	} else if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		lastMouseDown = false
 		m.mouseDown = true
 	}
 
