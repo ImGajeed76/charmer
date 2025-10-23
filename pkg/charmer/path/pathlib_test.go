@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	pathmodels "github.com/ImGajeed76/charmer/pkg/charmer/path/models"
+	"log"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -58,7 +60,133 @@ func isSFTPAvailable() bool {
 	return true
 }
 
+// ==================== Docker SFTP Setup ====================
+
+var (
+	dockerComposeFile  = "../../../docker-sftp/docker-compose.yml"
+	sftpContainerName  = "charmer-sftp-testing"
+	weStartedContainer = false
+)
+
+func init() {
+	// Setup SFTP container for testing
+	setupSFTPContainer()
+}
+
+func setupSFTPContainer() {
+	// Check if docker-compose is available
+	if !isDockerComposeAvailable() {
+		log.Println("Docker Compose not available, SFTP tests will be skipped")
+		return
+	}
+
+	// Get absolute path to docker-compose file
+	absPath, err := filepath.Abs(dockerComposeFile)
+	if err != nil {
+		log.Printf("Failed to get absolute path for docker-compose file: %v\n", err)
+		return
+	}
+
+	// Check if container is already running
+	if isContainerRunning() {
+		log.Println("SFTP container already running")
+		return
+	}
+
+	// Start the container
+	log.Println("Starting SFTP container for testing...")
+	var cmd *exec.Cmd
+	if exec.Command("docker", "compose", "version").Run() == nil {
+		cmd = exec.Command("docker", "compose", "-f", absPath, "up", "-d")
+	} else {
+		cmd = exec.Command("docker-compose", "-f", absPath, "up", "-d")
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Failed to start SFTP container: %v\nOutput: %s\n", err, output)
+		return
+	}
+
+	weStartedContainer = true
+	log.Println("SFTP container started successfully")
+
+	// Wait for container to be ready
+	waitForSFTP()
+}
+
+func teardownSFTPContainer() {
+	if !weStartedContainer {
+		return
+	}
+
+	log.Println("Stopping SFTP container...")
+	absPath, err := filepath.Abs(dockerComposeFile)
+	if err != nil {
+		log.Printf("Failed to get absolute path for docker-compose file: %v\n", err)
+		return
+	}
+
+	var cmd *exec.Cmd
+	if exec.Command("docker", "compose", "version").Run() == nil {
+		cmd = exec.Command("docker", "compose", "-f", absPath, "down")
+	} else {
+		cmd = exec.Command("docker-compose", "-f", absPath, "down")
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Failed to stop SFTP container: %v\nOutput: %s\n", err, output)
+		return
+	}
+
+	log.Println("SFTP container stopped successfully")
+}
+
+func isDockerComposeAvailable() bool {
+	// Try docker-compose
+	cmd := exec.Command("docker-compose", "version")
+	if err := cmd.Run(); err == nil {
+		return true
+	}
+
+	// Try docker compose (v2 syntax)
+	cmd = exec.Command("docker", "compose", "version")
+	return cmd.Run() == nil
+}
+
+func isContainerRunning() bool {
+	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("name=%s", sftpContainerName), "--format", "{{.Names}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(string(output)) == sftpContainerName
+}
+
+func waitForSFTP() {
+	// Wait up to 30 seconds for SFTP to be ready
+	maxAttempts := 30
+	for i := 0; i < maxAttempts; i++ {
+		if isSFTPAvailable() {
+			log.Println("SFTP server is ready")
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+	log.Println("Warning: SFTP server may not be ready")
+}
+
 // ==================== Path Creation Tests ====================
+
+func TestMain(m *testing.M) {
+	// Run tests
+	code := m.Run()
+
+	// Cleanup
+	teardownSFTPContainer()
+
+	os.Exit(code)
+}
 
 func TestNew(t *testing.T) {
 	tests := []struct {
@@ -1483,6 +1611,9 @@ func TestPath_SFTP(t *testing.T) {
 	if !isSFTPAvailable() {
 		t.Skip("SFTP server not available")
 	}
+
+	t.Log("✓ SFTP server is available and responding")
+	t.Logf("✓ Testing against: %s@%s:%s", sftpTestUser, sftpTestHost, sftpTestPort)
 
 	testID := fmt.Sprintf("test-%d", time.Now().UnixNano())
 	sftpDir := getSFTPTestPath(testID)
