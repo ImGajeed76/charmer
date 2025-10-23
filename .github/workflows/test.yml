@@ -28,7 +28,7 @@ jobs:
       - name: Start SFTP container (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          docker-compose -f docker-sftp/docker-compose.yml up -d
+          docker compose -f docker-sftp/docker-compose.yml up -d
           sleep 10  # Wait for container to be ready
 
       - name: Run tests (Linux/macOS)
@@ -53,4 +53,4 @@ jobs:
       - name: Stop SFTP container (Linux/macOS)
         if: always() && runner.os != 'Windows'
         run: |
-          docker-compose -f docker-sftp/docker-compose.yml down
+          docker compose -f docker-sftp/docker-compose.yml down
