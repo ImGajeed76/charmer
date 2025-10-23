@@ -1,0 +1,23 @@
+# Docker Compose configuration for setting up an SFTP server for testing purposes.
+# Connect with testuser and testpass on port 2222.
+# Currently just use /config/upload for testing.
+
+services:
+  sftp:
+    image: linuxserver/openssh-server:latest
+    container_name: charmer-sftp-testing
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=testpass
+      - USER_NAME=testuser
+    ports:
+      - 2222:2222
+    volumes:
+      - sftp_config:/config
+      - sftp_data:/data
+
+volumes:
+  sftp_config:
+  sftp_data:
