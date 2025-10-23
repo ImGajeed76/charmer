@@ -116,6 +116,7 @@ type CharmSelectorModel struct {
 	topBar    *flexbox.Cell
 	leftCard  *flexbox.Cell
 	rightCard *flexbox.Cell
+	helpBar   *flexbox.Cell
 
 	// Mouse state
 	mouseX         int
@@ -161,11 +162,18 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 		SetContent("Description").
 		SetStyle(styles.rightCard)
 
+	helpBar := flexbox.NewCell(1, 1).
+		SetStyle(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Italic(true).
+			Padding(0, 1))
+
 	// Create flexbox layout
 	fb := flexbox.New(0, 0)
 	rows := []*flexbox.Row{
 		fb.NewRow().AddCells(topBar),
 		fb.NewRow().AddCells(leftCard, rightCard),
+		fb.NewRow().AddCells(helpBar),
 	}
 	fb.AddRows(rows)
 
@@ -191,6 +199,7 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 		topBar:               topBar,
 		leftCard:             leftCard,
 		rightCard:            rightCard,
+		helpBar:              helpBar,
 		markdownRenderer:     renderer,
 		descriptionCache:     make(map[string]string),
 		descriptionLineCache: make(map[string][]string),
@@ -385,9 +394,6 @@ func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model,
 // handleKeyPress processes keyboard input
 func (m *CharmSelectorModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
-		m.setCurrentPath("") // reset so no function gets called
-		return m, tea.Quit
 	case "up":
 		if m.mouseX < m.leftCard.GetWidth() {
 			m.navigateUp()
@@ -584,7 +590,9 @@ func (m *CharmSelectorModel) handleEscape() (tea.Model, tea.Cmd) {
 		m.updateOptions()
 		m.resetNavigationState()
 	} else {
-		m.navigateBack()
+		// Close Selector
+		m.setCurrentPath("") // reset so no function gets called
+		return m, tea.Quit
 	}
 	m.descriptionOffset = 0
 	m.prerenderDescription()
@@ -651,6 +659,19 @@ func (m *CharmSelectorModel) View() string {
 
 	m.renderNavigationOptions(&leftCardContent)
 	m.leftCard.SetContent(leftCardContent.String())
+
+	// Set help text with sections
+	// Set help text with sections
+	helpText := "General: Enter: Select | Type: Search | Backspace: Back | Esc: Quit  •  " +
+		"Left Panel: ↑↓: Navigate  •  Right Panel: ↑↓: Scroll"
+
+	if m.searchTerm != "" {
+		helpText = "General: Enter: Select | Type: Search | Backspace: Back | Esc: Stop Search  •  " +
+			"Left Panel: ↑↓: Navigate  •  Right Panel: ↑↓: Scroll"
+	}
+
+	m.helpBar.SetContent(helpText)
+
 	return m.flexbox.Render()
 }
 
