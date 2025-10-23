@@ -680,7 +680,12 @@ func (m *CharmSelectorModel) prerenderDescription() {
 	}
 
 	// Only render if it's actually a charm
-	fullPath := m.getCurrentPath() + selectedOption
+	var fullPath string
+	if m.searchTerm != "" {
+		fullPath = selectedOption
+	} else {
+		fullPath = m.getCurrentPath() + selectedOption
+	}
 	if charm, ok := m.charms[fullPath]; ok {
 		rendered := charm.Description
 
@@ -786,7 +791,12 @@ func (m *CharmSelectorModel) renderOption(content *strings.Builder, index int, o
 		cursor = ">"
 	}
 
-	fullPath := m.getCurrentPath() + option
+	var fullPath string
+	if m.searchTerm != "" {
+		fullPath = option
+	} else {
+		fullPath = m.getCurrentPath() + option
+	}
 	if charm, ok := m.charms[fullPath]; ok {
 		m.renderCharmOption(content, index, option, cursor, charm)
 	} else {
