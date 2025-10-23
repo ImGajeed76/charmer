@@ -25,22 +25,21 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Start SFTP container (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Start SFTP container (Linux only)
+        if: runner.os == 'Linux'
         run: |
           docker compose -f docker-sftp/docker-compose.yml up -d
-          sleep 10  # Wait for container to be ready
+          sleep 10
 
-      - name: Run tests (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Run tests (Linux with SFTP)
+        if: runner.os == 'Linux'
         run: |
           go test ./... -v -race -coverprofile=coverage.txt -covermode=atomic
 
-      - name: Run tests (Windows - no SFTP)
-        if: runner.os == 'Windows'
+      - name: Run tests (macOS/Windows - no SFTP)
+        if: runner.os != 'Linux'
         run: |
           go test ./... -v -short
-        shell: powershell
 
       - name: Upload coverage
         if: runner.os == 'Linux' && matrix.go-version == '1.25'
@@ -50,7 +49,7 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-      - name: Stop SFTP container (Linux/macOS)
-        if: always() && runner.os != 'Windows'
+      - name: Stop SFTP container (Linux only)
+        if: always() && runner.os == 'Linux'
         run: |
           docker compose -f docker-sftp/docker-compose.yml down
