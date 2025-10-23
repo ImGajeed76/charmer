@@ -291,19 +291,17 @@ func (p *Path) Validate() error {
 	}
 
 	// Validate path segments
-	segments := strings.Split(
+	pathWithoutProtocol := strings.TrimPrefix(
 		strings.TrimPrefix(
-			strings.TrimPrefix(
-				strings.TrimPrefix(
-					p.path,
-					"http://",
-				),
-				"https://",
-			),
-			"/",
+			p.path,
+			"http://",
 		),
-		"/",
+		"https://",
 	)
+	// Trim leading and trailing slashes to avoid empty segments from trailing slashes
+	pathWithoutProtocol = strings.Trim(pathWithoutProtocol, "/")
+	segments := strings.Split(pathWithoutProtocol, "/")
+
 	for _, segment := range segments {
 		if segment == "" && len(segments) > 1 {
 			return errors.New("path contains empty segment")
@@ -507,8 +505,13 @@ func (p *Path) Parent() *Path {
 		// Find the last slash
 		lastSlash := strings.LastIndex(urlPath, "/")
 		if lastSlash <= 0 {
-			// No slash or only the leading slash
-			u.Path = "/"
+			// No slash or only the leading slash - return just scheme + host
+			u.Path = ""
+			return &Path{
+				path:   u.String(),
+				isUrl:  true,
+				isSftp: false,
+			}
 		} else {
 			u.Path = urlPath[:lastSlash]
 			if u.Path == "" {
@@ -1087,6 +1090,11 @@ func (p *Path) Glob(pattern string) ([]*Path, error) {
 		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: errors.New("cannot glob URLs")}
 	}
 
+	// Check for recursive glob pattern
+	if strings.Contains(pattern, "**") {
+		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: errors.New("recursive glob '**' not supported, use single '*' or wait for rglob() function")}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, &pathmodels.PathError{Op: "glob", Path: p.path, Err: err}
 	}
@@ -1123,4 +1131,154 @@ func (p *Path) Glob(pattern string) ([]*Path, error) {
 		}
 		return paths, nil
 	}
+}
+
+// WithName returns a new path with the file name changed
+func (p *Path) WithName(name string) *Path {
+	newPath := p.Parent().Join(name)
+	return newPath
+}
+
+// WithSuffix returns a new path with the extension changed
+func (p *Path) WithSuffix(suffix string) *Path {
+	if !strings.HasPrefix(suffix, ".") {
+		suffix = "." + suffix
+	}
+	stem := p.Stem()
+	return p.WithName(stem + suffix)
+}
+
+// AppendText appends text content to the file
+func (p *Path) AppendText(content string, encoding string) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "append", Path: p.path, Err: errors.New("cannot append to URLs")}
+	}
+
+	existing := ""
+	if p.Exists() {
+		var err error
+		existing, err = p.ReadText(encoding)
+		if err != nil {
+			return err
+		}
+	}
+
+	return p.WriteText(existing+content, encoding)
+}
+
+// AppendBytes appends byte content to the file
+func (p *Path) AppendBytes(content []byte) error {
+	if p.isUrl {
+		return &pathmodels.PathError{Op: "append", Path: p.path, Err: errors.New("cannot append to URLs")}
+	}
+
+	existing := []byte{}
+	if p.Exists() {
+		var err error
+		existing, err = p.ReadBytes()
+		if err != nil {
+			return err
+		}
+	}
+
+	return p.WriteBytes(append(existing, content...))
+}
+
+// ReadLines reads the file and returns lines as a slice
+func (p *Path) ReadLines(encoding string) ([]string, error) {
+	content, err := p.ReadText(encoding)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split on newlines, handle both \n and \r\n
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+
+	// Remove last empty line if file ends with newline
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	return lines, nil
+}
+
+// WriteLines writes lines to the file, adding newlines
+func (p *Path) WriteLines(lines []string, encoding string) error {
+	content := strings.Join(lines, "\n")
+	if len(lines) > 0 {
+		content += "\n" // Add final newline
+	}
+	return p.WriteText(content, encoding)
+}
+
+// IsAbsolute returns true if the path is absolute
+func (p *Path) IsAbsolute() bool {
+	if p.isUrl || p.isSftp {
+		return true
+	}
+	return filepath.IsAbs(p.path)
+}
+
+// IsRelative returns true if the path is relative
+func (p *Path) IsRelative() bool {
+	return !p.IsAbsolute()
+}
+
+// Parts returns the path components as a slice
+func (p *Path) Parts() []string {
+	if p.isUrl {
+		u, err := url.Parse(p.path)
+		if err != nil {
+			return []string{p.path}
+		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		return append([]string{u.Scheme + "://" + u.Host}, parts...)
+	}
+
+	cleanPath := strings.Trim(p.path, "/")
+	if cleanPath == "" {
+		return []string{"/"}
+	}
+
+	parts := strings.Split(cleanPath, "/")
+	if strings.HasPrefix(p.path, "/") && !p.isSftp {
+		parts = append([]string{"/"}, parts...)
+	}
+
+	return parts
+}
+
+// Match returns true if the path name matches the pattern
+func (p *Path) Match(pattern string) (bool, error) {
+	return filepath.Match(pattern, p.Name())
+}
+
+// Size returns the file size in bytes
+func (p *Path) Size() (int64, error) {
+	info, err := p.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return info.Size, nil
+}
+
+// IsEmpty returns true if the file is empty or directory has no entries
+func (p *Path) IsEmpty() (bool, error) {
+	if !p.Exists() {
+		return false, &pathmodels.PathError{Op: "is-empty", Path: p.path, Err: pathmodels.ErrNotExist}
+	}
+
+	if p.IsDir() {
+		entries, err := p.List()
+		if err != nil {
+			return false, err
+		}
+		return len(entries) == 0, nil
+	}
+
+	size, err := p.Size()
+	if err != nil {
+		return false, err
+	}
+	return size == 0, nil
 }

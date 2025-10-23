@@ -31,9 +31,8 @@ func Copy(src string, dest string, opts ...pathmodels.CopyOptions) error {
 
 	// Handle directory copy if source is a directory
 	if srcInfo.IsDir() {
-		if !options.Recursive {
-			return &pathmodels.PathError{Op: "copy", Path: src, Err: pathmodels.ErrInvalid}
-		}
+		// Automatically enable recursive for directory copies
+		options.Recursive = true
 		return copyDir(ctx, src, dest, srcInfo, options)
 	}
 
