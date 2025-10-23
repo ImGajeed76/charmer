@@ -51,6 +51,11 @@ func cleanupSFTPTestDir(t *testing.T, path *Path) {
 
 // isSFTPAvailable checks if SFTP server is available
 func isSFTPAvailable() bool {
+	// Skip on non-Linux in CI
+	if runtime.GOOS != "linux" && os.Getenv("CI") != "" {
+		return false
+	}
+
 	testPath := getSFTPTestPath("test-connection")
 	defer testPath.RemoveDir(true, true, false)
 
@@ -349,6 +354,11 @@ func TestCwd(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// Normalize path for comparison
+	if runtime.GOOS == "windows" {
+		wd = strings.ReplaceAll(wd, "\\", "/")
 	}
 
 	p := Cwd()

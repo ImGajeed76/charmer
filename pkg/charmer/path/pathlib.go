@@ -284,8 +284,15 @@ func (p *Path) Validate() error {
 		return errors.New("path must be absolute (start with /)")
 	} else if !strings.HasPrefix(p.path, "/") && p.isSftp {
 		return errors.New("SFTP path must be absolute (start with /)")
-	} else if !p.isSftp && !p.isUrl && runtime.GOOS == "windows" && len(p.path) > 2 && p.path[1] == ':' && p.path[2] != '/' {
-		return errors.New("windows path must start with [DriveLetter]:/")
+	} else if !p.isSftp && !p.isUrl && runtime.GOOS == "windows" {
+		// Windows path validation: check for drive letter
+		if len(p.path) < 3 {
+			return errors.New("windows path too short")
+		}
+		// Accept both C:/ and C:\ formats
+		if p.path[1] != ':' || (p.path[2] != '/' && p.path[2] != '\\') {
+			return errors.New("windows path must start with [DriveLetter]:/ or [DriveLetter]:\\")
+		}
 	} else if !(strings.HasPrefix(p.path, "http://") || strings.HasPrefix(p.path, "https://")) && p.isUrl {
 		return errors.New("URL path must start with http:// or https://")
 	}
@@ -475,6 +482,7 @@ func (p *Path) Join(path string) *Path {
 	}
 
 	newPath := filepath.Clean(filepath.Join(p.path, path))
+	newPath = strings.ReplaceAll(newPath, "\\", "/")
 	return &Path{
 		path:   newPath,
 		isSftp: false,
