@@ -74,6 +74,11 @@ func init() {
 }
 
 func setupSFTPContainer() {
+	if runtime.GOOS == "windows" {
+		log.Println("Skipping SFTP container setup on Windows (Docker networking limitations)")
+		return
+	}
+
 	// Check if docker-compose is available
 	if !isDockerComposeAvailable() {
 		log.Println("Docker Compose not available, SFTP tests will be skipped")
