@@ -30,21 +30,29 @@ const (
 	maxCacheSize            = 100
 )
 
+// Panel focus constants
+const (
+	PanelLeft  = "left"
+	PanelRight = "right"
+)
+
 // UI Styles configuration
 var styles = struct {
-	base         lipgloss.Style
-	card         lipgloss.Style
-	rightCard    lipgloss.Style
-	topBar       lipgloss.Style
-	selectedItem lipgloss.Style
-	path         lipgloss.Style
-	search       lipgloss.Style
-	searchMatch  lipgloss.Style
-	section      lipgloss.Style
-	cursor       lipgloss.Style
-	title        lipgloss.Style
-	cwd          lipgloss.Style
-	hover        lipgloss.Style
+	base             lipgloss.Style
+	card             lipgloss.Style
+	cardFocused      lipgloss.Style
+	rightCard        lipgloss.Style
+	rightCardFocused lipgloss.Style
+	topBar           lipgloss.Style
+	selectedItem     lipgloss.Style
+	path             lipgloss.Style
+	search           lipgloss.Style
+	searchMatch      lipgloss.Style
+	section          lipgloss.Style
+	cursor           lipgloss.Style
+	title            lipgloss.Style
+	cwd              lipgloss.Style
+	hover            lipgloss.Style
 }{
 	base: lipgloss.NewStyle().Padding(1),
 	card: lipgloss.NewStyle().
@@ -53,7 +61,19 @@ var styles = struct {
 		Height(0).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("241")),
+	cardFocused: lipgloss.NewStyle().
+		Padding(cardPadding, cardHorizontalPadding).
+		Width(0).
+		Height(0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(constants.Theme.PrimaryColor)),
 	rightCard: lipgloss.NewStyle().
+		Padding(cardPadding, cardHorizontalPadding).
+		Width(0).
+		Height(0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("241")),
+	rightCardFocused: lipgloss.NewStyle().
 		Padding(cardPadding, cardHorizontalPadding).
 		Width(0).
 		Height(0).
@@ -118,6 +138,9 @@ type CharmSelectorModel struct {
 	rightCard *flexbox.Cell
 	helpBar   *flexbox.Cell
 
+	// Focus state
+	focusedPanel string
+
 	// Mouse state
 	mouseX         int
 	mouseY         int
@@ -156,7 +179,7 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 
 	leftCard := flexbox.NewCell(1, 7).
 		SetContent("Navigation").
-		SetStyle(styles.card)
+		SetStyle(styles.cardFocused)
 
 	rightCard := flexbox.NewCell(1, 7).
 		SetContent("Description").
@@ -200,6 +223,7 @@ func NewCharmSelectorModel(charms map[string]models.CharmFunc, currentPath *stri
 		leftCard:             leftCard,
 		rightCard:            rightCard,
 		helpBar:              helpBar,
+		focusedPanel:         PanelLeft,
 		markdownRenderer:     renderer,
 		descriptionCache:     make(map[string]string),
 		descriptionLineCache: make(map[string][]string),
@@ -260,6 +284,7 @@ func (m *CharmSelectorModel) Init() tea.Cmd {
 
 	m.prerenderDescription()
 	m.updateDescriptionView()
+	m.updateCardStyles()
 	m.initialized = true
 
 	return func() tea.Msg {
@@ -295,6 +320,17 @@ func (m *CharmSelectorModel) updateDimensions(width, height int) {
 		glamour.WithWordWrap(m.descriptionMaxWidth),
 	); err == nil {
 		m.markdownRenderer = renderer
+	}
+}
+
+// updateCardStyles updates the card styles based on focus
+func (m *CharmSelectorModel) updateCardStyles() {
+	if m.focusedPanel == PanelLeft {
+		m.leftCard.SetStyle(styles.cardFocused)
+		m.rightCard.SetStyle(styles.rightCard)
+	} else {
+		m.leftCard.SetStyle(styles.card)
+		m.rightCard.SetStyle(styles.rightCardFocused)
 	}
 }
 
@@ -386,6 +422,7 @@ func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model,
 	m.updateDimensions(msg.Width, msg.Height)
 	m.prerenderDescription()
 	m.updateDescriptionView()
+	m.updateCardStyles()
 	m.initialized = true
 
 	return m, nil
@@ -394,14 +431,20 @@ func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model,
 // handleKeyPress processes keyboard input
 func (m *CharmSelectorModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "left":
+		m.focusedPanel = PanelLeft
+		m.updateCardStyles()
+	case "right":
+		m.focusedPanel = PanelRight
+		m.updateCardStyles()
 	case "up":
-		if m.mouseX < m.leftCard.GetWidth() {
+		if m.focusedPanel == PanelLeft {
 			m.navigateUp()
 		} else {
 			m.scrollDescriptionUp()
 		}
 	case "down":
-		if m.mouseX < m.leftCard.GetWidth() {
+		if m.focusedPanel == PanelLeft {
 			m.navigateDown()
 		} else {
 			m.scrollDescriptionDown()
@@ -426,27 +469,47 @@ func (m *CharmSelectorModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cm
 	wasPressed := !m.lastMousePress && currentMousePress
 	m.lastMousePress = currentMousePress
 
+	// Determine which panel the mouse is over
+	leftCardWidth := m.leftCard.GetWidth()
+	mousePanel := PanelLeft
+	if m.mouseX >= leftCardWidth {
+		mousePanel = PanelRight
+	}
+
+	// Handle scroll based on panel
 	if msg.Button == tea.MouseButtonWheelUp {
-		if m.mouseX < m.leftCard.GetWidth() {
+		if mousePanel == PanelLeft {
 			m.navigateUp()
 		} else {
 			m.scrollDescriptionUp()
 		}
 	} else if msg.Button == tea.MouseButtonWheelDown {
-		if m.mouseX < m.leftCard.GetWidth() {
+		if mousePanel == PanelLeft {
 			m.navigateDown()
 		} else {
 			m.scrollDescriptionDown()
 		}
 	}
 
-	// Handle hover
-	m.updateHoverState()
+	// Handle hover (only on left panel)
+	if mousePanel == PanelLeft {
+		m.updateHoverState()
+	} else {
+		m.isHovering = false
+	}
 
 	// Handle click
 	if wasPressed {
-		if m.isHovering && m.isValidIndex(m.hoverIndex) {
+		// Focus the clicked panel
+		if m.focusedPanel != mousePanel {
+			m.focusedPanel = mousePanel
+			m.updateCardStyles()
+		}
+
+		// If clicking on left panel with hover
+		if mousePanel == PanelLeft && m.isHovering && m.isValidIndex(m.hoverIndex) {
 			if m.cursor+m.offset != m.hoverIndex {
+				// First click: select the charm
 				m.cursor = m.hoverIndex - m.offset
 				if m.cursor < 0 {
 					m.cursor = 0
@@ -455,6 +518,7 @@ func (m *CharmSelectorModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cm
 				m.prerenderDescription()
 				m.updateDescriptionView()
 			} else {
+				// Second click on same charm: execute
 				return m.handleEnter()
 			}
 		}
@@ -660,19 +724,30 @@ func (m *CharmSelectorModel) View() string {
 	m.renderNavigationOptions(&leftCardContent)
 	m.leftCard.SetContent(leftCardContent.String())
 
-	// Set help text with sections
-	// Set help text with sections
-	helpText := "General: Enter: Select | Type: Search | Backspace: Back | Esc: Quit  •  " +
-		"Left Panel: ↑↓: Navigate  •  Right Panel: ↑↓: Scroll"
-
-	if m.searchTerm != "" {
-		helpText = "General: Enter: Select | Type: Search | Backspace: Back | Esc: Stop Search  •  " +
-			"Left Panel: ↑↓: Navigate  •  Right Panel: ↑↓: Scroll"
-	}
-
+	// Set help text based on focused panel
+	helpText := m.getHelpText()
 	m.helpBar.SetContent(helpText)
 
 	return m.flexbox.Render()
+}
+
+// getHelpText returns appropriate help text based on state
+func (m *CharmSelectorModel) getHelpText() string {
+	var generalHelp, panelHelp string
+
+	if m.searchTerm != "" {
+		generalHelp = "Enter: Select | Type: Search | Backspace: Clear Search | Esc: Stop Search"
+	} else {
+		generalHelp = "Enter: Select | Type: Search | Backspace: Back | Esc: Quit"
+	}
+
+	if m.focusedPanel == PanelLeft {
+		panelHelp = "←→: Switch Panel | ↑↓: Navigate Charms"
+	} else {
+		panelHelp = "←→: Switch Panel | ↑↓: Scroll Description"
+	}
+
+	return generalHelp + "  •  " + panelHelp
 }
 
 func (m *CharmSelectorModel) prerenderDescription() {
