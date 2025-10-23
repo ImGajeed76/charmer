@@ -4,6 +4,7 @@ import (
 	"fmt"
 	constants "github.com/ImGajeed76/charmer/internal"
 	"github.com/charmbracelet/glamour"
+	"golang.org/x/term"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,6 +117,9 @@ type CharmSelectorModel struct {
 	// Hover
 	hoverIndex int
 	isHovering bool
+
+	// Initialization state
+	initialized bool
 }
 
 // NewCharmSelectorModel creates and initializes a new CharmSelectorModel
@@ -175,7 +179,37 @@ func (m *CharmSelectorModel) Init() tea.Cmd {
 	cwd = styles.cwd.Render(cwd)
 	m.topBar.SetContent(title + "\n" + cwd)
 
-	return nil
+	// Get terminal size and initialize dimensions immediately
+	w, h, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		w, h = 80, 24 // fallback
+	}
+
+	// Initialize dimensions directly in Init
+	m.flexbox.SetWidth(w)
+	m.flexbox.SetHeight(h)
+	m.flexbox.ForceRecalculate()
+	m.maxEntries = m.leftCard.GetHeight() - 7
+
+	totalPadding := 4
+	borderSpace := 2
+	titleSpace := 4
+	m.descriptionMaxHeight = m.rightCard.GetHeight() -
+		(totalPadding + borderSpace + titleSpace)
+	m.descriptionMaxWidth = m.rightCard.GetWidth() - 10
+
+	m.markdownRenderer, _ = glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(m.descriptionMaxWidth),
+	)
+
+	m.prerenderDescription()
+	m.updateDescriptionView()
+	m.initialized = true
+
+	return func() tea.Msg {
+		return tea.WindowSizeMsg{Width: w, Height: h}
+	}
 }
 
 // updateOptions filters and updates available options based on the current path and search term
@@ -246,10 +280,15 @@ func (m *CharmSelectorModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model,
 		glamour.WithWordWrap(m.descriptionMaxWidth),
 	)
 
-	m.cleanup()
+	if m.initialized {
+		m.cleanup()
+	}
 
 	m.prerenderDescription()
 	m.updateDescriptionView()
+
+	m.initialized = true
+
 	return m, nil
 }
 
@@ -464,6 +503,10 @@ func (m *CharmSelectorModel) navigateBack() {
 
 // View renders the UI
 func (m *CharmSelectorModel) View() string {
+	if !m.initialized {
+		return "(move your mouse or press any key to fix the UI...)"
+	}
+
 	var leftCardContent strings.Builder
 
 	// Show current path and search with section spacing
