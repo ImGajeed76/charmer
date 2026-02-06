@@ -4,7 +4,7 @@ Charmer is a Go package that automatically generates Terminal User Interfaces (T
 by [Charm](https://github.com/charmbracelet) libraries, it transforms annotated functions into beautiful, navigable
 command-line interfaces without the hassle of UI implementation.
 
-[📚 Documentation](https://ImGajeed76.github.io/charmer)
+[📚 Documentation](https://ImGajeed76.github.io/charmer) | [📝 Blog Post](https://oseifert.ch/blog/building-charmer)
 
 ## ✨ Features
 
@@ -104,7 +104,7 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 ## 💖 Acknowledgments
 
-- Built with ❤️ in Switzerland by ImGajeed76
+- Built with ❤️ in Switzerland by [Oliver Seifert](https://oseifert.ch)
 - Powered by the amazing [Charm](https://github.com/charmbracelet) libraries
 
 ---
